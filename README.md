@@ -88,7 +88,7 @@ Stride-Fitness-ios/
 
 ## API Overview
 
-The app communicates with a REST backend deployed on Google Cloud Run:
+The app communicates with a REST backend(Stride-Fitness-App) deployed on Google Cloud Run:
 
 | Method | Endpoint | Purpose |
 |---|---|---|
