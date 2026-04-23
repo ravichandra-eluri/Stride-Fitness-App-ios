@@ -7,23 +7,23 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            DashboardView()
+            AnyView(DashboardView())
                 .tabItem { Label("Home",     systemImage: "house.fill") }
                 .tag(0)
 
-            MealPlanView()
+            AnyView(MealPlanView())
                 .tabItem { Label("Meals",    systemImage: "fork.knife") }
                 .tag(1)
 
-            LogFoodView()
+            AnyView(LogFoodView())
                 .tabItem { Label("Log",      systemImage: "plus.circle.fill") }
                 .tag(2)
 
-            CoachView()
+            AnyView(CoachView())
                 .tabItem { Label("Coach",    systemImage: "bubble.left.fill") }
                 .tag(3)
 
-            ProgressView()
+            AnyView(ProgressTrackingView())
                 .tabItem { Label("Progress", systemImage: "chart.line.uptrend.xyaxis") }
                 .tag(4)
         }
@@ -41,23 +41,20 @@ class DashboardViewModel {
     var coachMessage: CoachMessage?
     var profile: UserProfile?
     var isLoading = true
-    var error: String?
 
     func load() async {
         isLoading = true
-        error = nil
-        async let logTask     = APIClient.shared.getTodayLog()
-        async let coachTask   = APIClient.shared.getTodayCoachMessage()
-        async let profileTask = APIClient.shared.getProfile()
 
-        do {
-            let (log, coach, prof) = try await (logTask, coachTask, profileTask)
-            todayLog = log
-            coachMessage = coach
-            profile = prof
-        } catch {
-            self.error = error.localizedDescription
-        }
+        // Load each independently — one failure shouldn't break the whole screen
+        do { todayLog = try await APIClient.shared.getTodayLog() }
+        catch { print("[Dashboard] todayLog: \(error)") }
+
+        do { coachMessage = try await APIClient.shared.getTodayCoachMessage() }
+        catch { print("[Dashboard] coachMessage: \(error)") }
+
+        do { profile = try await APIClient.shared.getProfile() }
+        catch { print("[Dashboard] profile: \(error)") }
+
         isLoading = false
     }
 
@@ -74,14 +71,14 @@ class DashboardViewModel {
 
 struct DashboardView: View {
     @State private var vm = DashboardViewModel()
+    @State private var showProfile = false
+    @State private var showOnboarding = false
 
     var body: some View {
         NavigationStack {
             Group {
                 if vm.isLoading {
                     WLoadingView()
-                } else if let error = vm.error {
-                    WErrorView(message: error) { Task { await vm.load() } }
                 } else {
                     dashboardContent
                 }
@@ -90,8 +87,8 @@ struct DashboardView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        ProfileView()
+                    Button {
+                        showProfile = true
                     } label: {
                         Image(systemName: "person.circle")
                             .foregroundColor(.primary)
@@ -100,6 +97,13 @@ struct DashboardView: View {
             }
         }
         .task { await vm.load() }
+        .sheet(isPresented: $showProfile) {
+            NavigationStack { ProfileView() }
+        }
+        .sheet(isPresented: $showOnboarding) {
+            AnyView(OnboardingFlowView(onComplete: { showOnboarding = false }))
+                .onDisappear { Task { await vm.load() } }
+        }
     }
 
     private var greeting: String {
@@ -115,6 +119,39 @@ struct DashboardView: View {
     private var dashboardContent: some View {
         ScrollView {
             VStack(spacing: Spacing.md) {
+
+                // Profile setup banner — shown when user skipped onboarding
+                if vm.profile == nil {
+                    Button {
+                        showOnboarding = true
+                    } label: {
+                        HStack(spacing: Spacing.md) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .font(.system(size: 24))
+                                .foregroundColor(.brandGreen)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Set up your profile")
+                                    .font(.labelMd)
+                                    .foregroundColor(.primary)
+                                Text("Get a personalized plan in 2 minutes")
+                                    .font(.bodySm)
+                                    .foregroundColor(.textMuted)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 14))
+                                .foregroundColor(.textMuted)
+                        }
+                        .padding(Spacing.md)
+                        .background(Color.brandGreenBg)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Radius.sm)
+                                .stroke(Color.brandGreen.opacity(0.4), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 // Calorie ring + macros
                 WCard {

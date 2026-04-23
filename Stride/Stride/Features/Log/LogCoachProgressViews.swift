@@ -48,6 +48,8 @@ class LogFoodViewModel {
 
 struct LogFoodView: View {
     @State private var vm = LogFoodViewModel()
+    @State private var showComingSoon = false
+    @State private var comingSoonTitle = ""
 
     let mealTypes = ["breakfast", "lunch", "snack", "dinner"]
 
@@ -131,6 +133,11 @@ struct LogFoodView: View {
             .navigationTitle("Log food")
             .background(Color.surface.opacity(0.4))
         }
+        .alert(comingSoonTitle, isPresented: $showComingSoon) {
+            Button("OK", role: .cancel) { vm.logMethod = "manual" }
+        } message: {
+            Text("This feature is coming soon. Use manual entry for now.")
+        }
     }
 
     private func logMethodButton(icon: String, label: String, method: String) -> some View {
@@ -165,8 +172,10 @@ struct LogFoodView: View {
                     .font(.bodyMd)
                     .foregroundColor(.textMuted)
                     .multilineTextAlignment(.center)
-                // In production: integrate AVFoundation barcode scanner here
-                WButton(title: "Open scanner") { }
+                WButton(title: "Open scanner") {
+                    comingSoonTitle = "Barcode Scanner"
+                    showComingSoon = true
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(Spacing.xl)
@@ -183,8 +192,10 @@ struct LogFoodView: View {
                     .font(.bodyMd)
                     .foregroundColor(.textMuted)
                     .multilineTextAlignment(.center)
-                // In production: open camera, send base64 image to Claude vision API
-                WButton(title: "Open camera") { }
+                WButton(title: "Open camera") {
+                    comingSoonTitle = "Photo Food Recognition"
+                    showComingSoon = true
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(Spacing.xl)
@@ -214,12 +225,10 @@ struct CoachView: View {
             Group {
                 if isLoading {
                     WLoadingView(message: "Loading your coach...")
-                } else if let error {
-                    WErrorView(message: error) { Task { await load() } }
                 } else if let msg = message {
                     coachContent(msg)
                 } else {
-                    WErrorView(message: "No message today yet") { Task { await load() } }
+                    emptyCoachView
                 }
             }
             .navigationTitle("Your coach")
@@ -230,13 +239,31 @@ struct CoachView: View {
 
     private func load() async {
         isLoading = true
-        error = nil
         do {
             message = try await APIClient.shared.getTodayCoachMessage()
         } catch {
-            self.error = error.localizedDescription
+            print("[Coach] \(error)")
         }
         isLoading = false
+    }
+
+    private var emptyCoachView: some View {
+        VStack(spacing: Spacing.lg) {
+            Spacer()
+            Image(systemName: "bubble.left.fill")
+                .font(.system(size: 48))
+                .foregroundColor(.textMuted)
+            Text("No coach message yet")
+                .font(.titleSm)
+            Text("Your daily coaching message will appear here each morning.")
+                .font(.bodyMd)
+                .foregroundColor(.textMuted)
+                .multilineTextAlignment(.center)
+            WButtonOutline(title: "Refresh") { Task { await load() } }
+                .frame(width: 160)
+            Spacer()
+        }
+        .padding(Spacing.lg)
     }
 
     private func coachContent(_ msg: CoachMessage) -> some View {
@@ -294,15 +321,15 @@ class ProgressViewModel {
 
     func load() async {
         isLoading = true
-        async let summaryTask = APIClient.shared.getWeeklySummary()
-        async let weightTask  = APIClient.shared.getWeightHistory()
-        do {
-            let (s, w) = try await (summaryTask, weightTask)
-            summary = s
-            weightHistory = w
-        } catch {
-            self.error = error.localizedDescription
-        }
+        error = nil
+
+        // Load each independently so one failure doesn't break the screen
+        do { summary = try await APIClient.shared.getWeeklySummary() }
+        catch { print("[Progress] summary: \(error)") }
+
+        do { weightHistory = try await APIClient.shared.getWeightHistory() }
+        catch { print("[Progress] weightHistory: \(error)") }
+
         isLoading = false
     }
 
@@ -315,7 +342,7 @@ class ProgressViewModel {
     }
 }
 
-struct ProgressView: View {
+struct ProgressTrackingView: View {
     @State private var vm = ProgressViewModel()
 
     var body: some View {
@@ -323,8 +350,6 @@ struct ProgressView: View {
             Group {
                 if vm.isLoading {
                     WLoadingView()
-                } else if let error = vm.error {
-                    WErrorView(message: error) { Task { await vm.load() } }
                 } else {
                     progressContent
                 }

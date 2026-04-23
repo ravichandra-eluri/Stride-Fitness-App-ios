@@ -15,6 +15,7 @@ class MealPlanViewModel {
     var isSwapping = false
     var selectedFilter = "similar_calories"
     var error: String?
+    var noProfile = false
 
     var currentDayPlan: DayPlan? {
         plan?.days.first { $0.day == selectedDay }
@@ -22,9 +23,21 @@ class MealPlanViewModel {
 
     func load() async {
         isLoading = true
+        error = nil
+        noProfile = false
         do {
             plan = try await APIClient.shared.getMealPlan()
             selectedDay = plan?.days.first?.day ?? ""
+        } catch let apiError as APIError {
+            if case .serverError(404, let msg) = apiError {
+                if msg.contains("profile not found") {
+                    noProfile = true
+                } else {
+                    plan = nil  // no plan yet — new user with profile
+                }
+            } else {
+                self.error = apiError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -33,9 +46,16 @@ class MealPlanViewModel {
 
     func regenerate() async {
         isRegenerating = true
+        error = nil
         do {
             plan = try await APIClient.shared.regenerateMealPlan()
             selectedDay = plan?.days.first?.day ?? ""
+        } catch let apiError as APIError {
+            if case .serverError(404, let msg) = apiError, msg.contains("profile not found") {
+                noProfile = true
+            } else {
+                self.error = apiError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -79,6 +99,7 @@ class MealPlanViewModel {
 
 struct MealPlanView: View {
     @State private var vm = MealPlanViewModel()
+    @State private var showOnboarding = false
 
     var body: some View {
         NavigationStack {
@@ -87,16 +108,22 @@ struct MealPlanView: View {
                     WLoadingView(message: "Loading your meal plan...")
                 } else if let error = vm.error {
                     WErrorView(message: error) { Task { await vm.load() } }
+                } else if vm.noProfile {
+                    noProfileView
                 } else if vm.plan != nil {
                     mealPlanContent
                 } else {
-                    WErrorView(message: "No meal plan found") { Task { await vm.load() } }
+                    emptyMealPlanView
                 }
             }
             .navigationTitle("Meal plan")
             .navigationBarTitleDisplayMode(.large)
         }
         .task { await vm.load() }
+        .sheet(isPresented: $showOnboarding) {
+            AnyView(OnboardingFlowView(onComplete: { showOnboarding = false }))
+                .onDisappear { Task { await vm.load() } }
+        }
         .sheet(isPresented: .init(
             get: { vm.swapTargetMeal != nil },
             set: { if !$0 { vm.swapTargetMeal = nil; vm.swapAlternatives = [] } }
@@ -104,6 +131,27 @@ struct MealPlanView: View {
             MealSwapSheet(vm: vm)
                 .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
         }
+    }
+
+    private var noProfileView: some View {
+        VStack(spacing: Spacing.lg) {
+            Spacer()
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.system(size: 48))
+                .foregroundColor(.textMuted)
+            Text("Profile not set up")
+                .font(.titleSm)
+            Text("Complete your profile so we can generate a personalized meal plan for you.")
+                .font(.bodyMd)
+                .foregroundColor(.textMuted)
+                .multilineTextAlignment(.center)
+            WButton(title: "Set up my profile") {
+                showOnboarding = true
+            }
+            .frame(width: 220)
+            Spacer()
+        }
+        .padding(Spacing.lg)
     }
 
     private var mealPlanContent: some View {
@@ -156,6 +204,27 @@ struct MealPlanView: View {
             }
         }
         .background(Color.surface.opacity(0.4))
+    }
+
+    private var emptyMealPlanView: some View {
+        VStack(spacing: Spacing.lg) {
+            Spacer()
+            Image(systemName: "fork.knife")
+                .font(.system(size: 48))
+                .foregroundColor(.textMuted)
+            Text("No meal plan yet")
+                .font(.titleSm)
+            Text("Your personalized meal plan will appear here once it's generated.")
+                .font(.bodyMd)
+                .foregroundColor(.textMuted)
+                .multilineTextAlignment(.center)
+            WButton(title: "Generate meal plan") {
+                Task { await vm.regenerate() }
+            }
+            .frame(width: 220)
+            Spacer()
+        }
+        .padding(Spacing.lg)
     }
 
     private func mealCard(_ meal: Meal) -> some View {
