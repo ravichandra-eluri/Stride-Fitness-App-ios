@@ -26,6 +26,8 @@ extension Color {
     static let surface       = Color(uiColor: .tertiarySystemGroupedBackground)
     static let border        = Color(uiColor: .separator)
     static let textMuted     = Color(uiColor: .secondaryLabel)
+    static let accentPeach   = Color(light: "#F5C7A3", dark: "#D38C5E")
+    static let accentMint    = Color(light: "#BFE9D8", dark: "#2B6B58")
 
     /// Build a dynamic color that switches between light and dark values.
     init(light: String, dark: String) {
@@ -97,6 +99,10 @@ enum Radius {
 extension View {
     func cardShadow() -> some View {
         self.shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
+    }
+
+    func heroShadow() -> some View {
+        self.shadow(color: Color.brandGreen.opacity(0.18), radius: 24, x: 0, y: 12)
     }
 }
 

@@ -321,7 +321,10 @@ class ProgressViewModel {
         do { summary = try await APIClient.shared.getWeeklySummary() }
         catch { print("[Progress] summary: \(error)") }
 
-        do { weightHistory = try await APIClient.shared.getWeightHistory() }
+        do {
+            weightHistory = try await APIClient.shared.getWeightHistory()
+            weightHistory.sort { $0.loggedAtDate < $1.loggedAtDate }
+        }
         catch { print("[Progress] weightHistory: \(error)") }
 
         isLoading = false

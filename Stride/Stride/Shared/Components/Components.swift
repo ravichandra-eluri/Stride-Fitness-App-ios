@@ -1,5 +1,80 @@
 import SwiftUI
 
+struct WScreenBackground<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color.appBackground,
+                    Color.brandGreenBg.opacity(0.75),
+                    Color.brandPurpleBg.opacity(0.45)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            Circle()
+                .fill(Color.accentPeach.opacity(0.22))
+                .frame(width: 260, height: 260)
+                .blur(radius: 14)
+                .offset(x: 130, y: -280)
+
+            Circle()
+                .fill(Color.accentMint.opacity(0.24))
+                .frame(width: 220, height: 220)
+                .blur(radius: 12)
+                .offset(x: -140, y: -120)
+
+            content()
+        }
+    }
+}
+
+struct WHeroCard<Content: View>: View {
+    var padding: CGFloat = Spacing.lg
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(padding)
+            .background(
+                LinearGradient(
+                    colors: [Color.cardSurface.opacity(0.94), Color.brandGreenBg.opacity(0.85)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+                    .stroke(Color.white.opacity(0.45), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+            .heroShadow()
+    }
+}
+
+struct WSectionHeader: View {
+    let eyebrow: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text(eyebrow.uppercased())
+                .font(.labelSm)
+                .foregroundColor(.brandGreen)
+            Text(title)
+                .font(.titleLg)
+            Text(subtitle)
+                .font(.bodyMd)
+                .foregroundColor(.textMuted)
+        }
+    }
+}
+
 // ── WCard — standard card container ──────────────────────────────────────────
 
 struct WCard<Content: View>: View {

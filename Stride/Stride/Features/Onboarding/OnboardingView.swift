@@ -61,12 +61,22 @@ class OnboardingViewModel {
     func generatePlan() async {
         isGenerating = true
         error = nil
+        withAnimation(.easeInOut(duration: 0.25)) {
+            currentStep = 3
+        }
 
         do {
             plan = try await APIClient.shared.completeOnboarding(profile: buildProfile)
             withAnimation { currentStep = 4 } // jump to result screen
         } catch {
-            self.error = "Could not generate your plan right now. You can retry or skip and set up later."
+            withAnimation(.easeInOut(duration: 0.25)) {
+                currentStep = 2
+            }
+            print("[Onboarding] generatePlan failed: \(error)")
+            let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.error = message.isEmpty
+                ? "Could not generate your plan right now. You can retry or skip and set up later."
+                : message
         }
         isGenerating = false
     }
@@ -80,40 +90,81 @@ struct OnboardingFlowView: View {
     var onComplete: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Progress bar
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.surface)
-                        .frame(height: 3)
-                    Rectangle()
-                        .fill(Color.brandGreen)
-                        .frame(
-                            width: geo.size.width * CGFloat(vm.currentStep + 1) / CGFloat(vm.totalSteps),
-                            height: 3
-                        )
-                        .animation(.easeInOut, value: vm.currentStep)
-                }
-            }
-            .frame(height: 3)
+        WScreenBackground {
+            VStack(spacing: 0) {
+                VStack(spacing: Spacing.md) {
+                    HStack {
+                        Text("Step \(min(vm.currentStep + 1, vm.totalSteps)) of \(vm.totalSteps)")
+                            .font(.labelSm)
+                            .foregroundColor(.textMuted)
+                        Spacer()
+                        if vm.currentStep < vm.totalSteps - 1 {
+                            Text(progressLabel)
+                                .font(.labelSm)
+                                .foregroundColor(.brandGreen)
+                        }
+                    }
 
-            // Steps
-            TabView(selection: $vm.currentStep) {
-                OnboardingGoalScreen(vm: vm).tag(0)
-                OnboardingBodyScreen(vm: vm).tag(1)
-                OnboardingLifestyleScreen(vm: vm) {
-                    onComplete?() ?? appState.completeOnboarding()
-                }.tag(2)
-                OnboardingGeneratingScreen(vm: vm).tag(3)
-                OnboardingResultScreen(vm: vm) {
-                    onComplete?() ?? appState.completeOnboarding()
-                }.tag(4)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.white.opacity(0.45))
+                                .frame(height: 8)
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.brandGreen, Color.brandPurple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(
+                                    width: geo.size.width * CGFloat(vm.currentStep + 1) / CGFloat(vm.totalSteps),
+                                    height: 8
+                                )
+                                .animation(.easeInOut, value: vm.currentStep)
+                        }
+                    }
+                    .frame(height: 8)
+                }
+                .padding(.horizontal, Spacing.lg)
+                .padding(.top, Spacing.md)
+
+                TabView(selection: $vm.currentStep) {
+                    OnboardingGoalScreen(vm: vm).tag(0)
+                    OnboardingBodyScreen(vm: vm).tag(1)
+                    OnboardingLifestyleScreen(vm: vm) {
+                        onComplete?() ?? appState.completeOnboarding()
+                    }.tag(2)
+                    OnboardingGeneratingScreen(vm: vm).tag(3)
+                    OnboardingResultScreen(vm: vm) {
+                        onComplete?() ?? appState.completeOnboarding()
+                    }.tag(4)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut, value: vm.currentStep)
+                .onChange(of: vm.currentStep) { _, _ in dismissKeyboard() }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .animation(.easeInOut, value: vm.currentStep)
         }
-        .background(Color.appBackground)
+    }
+
+    /// Drops first responder so the keyboard doesn't linger when the user
+    /// moves past a step that had a focused text field.
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
+    }
+
+    private var progressLabel: String {
+        switch vm.currentStep {
+        case 0: return "Goal"
+        case 1: return "Body"
+        case 2: return "Lifestyle"
+        case 3: return "Generating"
+        default: return "Ready"
+        }
     }
 }
 
@@ -130,12 +181,26 @@ struct OnboardingGoalScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text("What's your main goal?")
-                    .font(.titleMd)
-                Text("We'll build your plan around it")
-                    .font(.bodyMd)
-                    .foregroundColor(.textMuted)
+            WSectionHeader(
+                eyebrow: "Goal",
+                title: "What's your main goal?",
+                subtitle: "We'll shape the entire Stride experience around the outcome you care about most."
+            )
+
+            WHeroCard {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Personalized from day one")
+                            .font(.labelMd)
+                        Text("Meal guidance, coach tone, and calorie targets adapt to what you pick here.")
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                    }
+                    Spacer()
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.brandPurple)
+                }
             }
 
             VStack(spacing: Spacing.sm) {
@@ -191,59 +256,67 @@ struct OnboardingBodyScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                VStack(alignment: .leading, spacing: Spacing.xs) {
-                    Text("Your body stats")
-                        .font(.titleMd)
-                    Text("Used to calculate your personalized plan")
-                        .font(.bodyMd)
-                        .foregroundColor(.textMuted)
-                }
+                WSectionHeader(
+                    eyebrow: "Profile",
+                    title: "Your body stats",
+                    subtitle: "These details let Stride build realistic calorie and weight targets instead of generic defaults."
+                )
 
-                // Name
-                formField("Your name") {
-                    TextField("e.g. Ravi", text: $vm.name)
-                        .textContentType(.givenName)
-                }
-
-                // Age + Gender
-                HStack(spacing: Spacing.md) {
-                    formField("Age") {
-                        Stepper("\(vm.age)", value: $vm.age, in: 13...80)
+                WHeroCard {
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        Text("Quick profile")
+                            .font(.labelMd)
+                        Text("Keep this practical. You can always refine your targets later in the app.")
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
                     }
-                    formField("Gender") {
-                        Picker("", selection: $vm.gender) {
-                            Text("Male").tag("male")
-                            Text("Female").tag("female")
-                            Text("Other").tag("other")
+                }
+
+                WCard {
+                    VStack(alignment: .leading, spacing: Spacing.md) {
+                        formField("Your name") {
+                            TextField("e.g. Ravi", text: $vm.name)
+                                .textContentType(.givenName)
                         }
-                        .pickerStyle(.menu)
-                    }
-                }
 
-                // Height + Current weight
-                HStack(spacing: Spacing.md) {
-                    formField("Height (cm)") {
-                        Stepper("\(vm.heightCm) cm", value: $vm.heightCm, in: 100...220)
-                    }
-                    formField("Weight (kg)") {
-                        Stepper(String(format: "%.1f", vm.currentWeight),
-                                value: $vm.currentWeight, in: 30...300, step: 0.5)
-                    }
-                }
+                        HStack(spacing: Spacing.md) {
+                            formField("Age") {
+                                Stepper("\(vm.age)", value: $vm.age, in: 13...80)
+                            }
+                            formField("Gender") {
+                                Picker("", selection: $vm.gender) {
+                                    Text("Male").tag("male")
+                                    Text("Female").tag("female")
+                                    Text("Other").tag("other")
+                                }
+                                .pickerStyle(.menu)
+                            }
+                        }
 
-                // Goal weight + timeline
-                formField("Goal weight (kg)") {
-                    Stepper(String(format: "%.1f kg", vm.goalWeight),
-                            value: $vm.goalWeight, in: 30...300, step: 0.5)
-                }
+                        HStack(spacing: Spacing.md) {
+                            formField("Height (cm)") {
+                                Stepper("\(vm.heightCm) cm", value: $vm.heightCm, in: 100...220)
+                            }
+                            formField("Weight (kg)") {
+                                Stepper(String(format: "%.1f", vm.currentWeight),
+                                        value: $vm.currentWeight, in: 30...300, step: 0.5)
+                            }
+                        }
 
-                formField("Timeline") {
-                    HStack(spacing: Spacing.sm) {
-                        ForEach([3, 6, 12], id: \.self) { months in
-                            WChip(
-                                label: "\(months) mo",
-                                isSelected: vm.timelineMonths == months
-                            ) { vm.timelineMonths = months }
+                        formField("Goal weight (kg)") {
+                            Stepper(String(format: "%.1f kg", vm.goalWeight),
+                                    value: $vm.goalWeight, in: 30...300, step: 0.5)
+                        }
+
+                        formField("Timeline") {
+                            HStack(spacing: Spacing.sm) {
+                                ForEach([3, 6, 12], id: \.self) { months in
+                                    WChip(
+                                        label: "\(months) mo",
+                                        isSelected: vm.timelineMonths == months
+                                    ) { vm.timelineMonths = months }
+                                }
+                            }
                         }
                     }
                 }
@@ -253,6 +326,7 @@ struct OnboardingBodyScreen: View {
             }
             .padding(Spacing.lg)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private func formField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -277,78 +351,77 @@ struct OnboardingLifestyleScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                VStack(alignment: .leading, spacing: Spacing.xs) {
-                    Text("Your lifestyle")
-                        .font(.titleMd)
-                    Text("So your plan fits your schedule")
-                        .font(.bodyMd)
-                        .foregroundColor(.textMuted)
-                }
+                WSectionHeader(
+                    eyebrow: "Lifestyle",
+                    title: "Make the plan fit your week",
+                    subtitle: "Stride works best when the recommendations match your time, movement, and food preferences."
+                )
 
-                // Activity level
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text("Activity level")
-                        .font(.labelSm)
-                        .foregroundColor(.textMuted)
-                    ForEach([
-                        ("sedentary", "Mostly sitting", "Desk job, little walking"),
-                        ("light",     "Lightly active", "Some walking, light exercise"),
-                        ("moderate",  "Moderately active", "Regular exercise 3-4x/week"),
-                    ], id: \.0) { id, title, sub in
-                        Button {
-                            Haptics.selection()
-                            vm.activityLevel = id
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(title).font(.labelMd)
-                                    Text(sub).font(.bodySm).foregroundColor(.textMuted)
+                WCard {
+                    VStack(alignment: .leading, spacing: Spacing.md) {
+                        VStack(alignment: .leading, spacing: Spacing.sm) {
+                            Text("Activity level")
+                                .font(.labelSm)
+                                .foregroundColor(.textMuted)
+                            ForEach([
+                                ("sedentary", "Mostly sitting", "Desk job, little walking"),
+                                ("light",     "Lightly active", "Some walking, light exercise"),
+                                ("moderate",  "Moderately active", "Regular exercise 3-4x/week"),
+                            ], id: \.0) { id, title, sub in
+                                Button {
+                                    Haptics.selection()
+                                    vm.activityLevel = id
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(title).font(.labelMd)
+                                            Text(sub).font(.bodySm).foregroundColor(.textMuted)
+                                        }
+                                        Spacer()
+                                        if vm.activityLevel == id {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.brandGreen)
+                                        }
+                                    }
+                                    .padding(Spacing.md)
+                                    .background(vm.activityLevel == id ? Color.brandGreenBg : Color.surface)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: Radius.sm)
+                                            .stroke(vm.activityLevel == id ? Color.brandGreen : Color.border,
+                                                    lineWidth: vm.activityLevel == id ? 1.5 : 0.5)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
                                 }
-                                Spacer()
-                                if vm.activityLevel == id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.brandGreen)
-                                }
-                            }
-                            .padding(Spacing.md)
-                            .background(vm.activityLevel == id ? Color.brandGreenBg : Color.surface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Radius.sm)
-                                    .stroke(vm.activityLevel == id ? Color.brandGreen : Color.border,
-                                            lineWidth: vm.activityLevel == id ? 1.5 : 0.5)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                // Daily time
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text("Daily time for health")
-                        .font(.labelSm)
-                        .foregroundColor(.textMuted)
-                    HStack(spacing: Spacing.sm) {
-                        ForEach([5, 15, 30], id: \.self) { min in
-                            WChip(label: "\(min) min", isSelected: vm.dailyMinutes == min) {
-                                vm.dailyMinutes = min
+                                .buttonStyle(.plain)
                             }
                         }
-                    }
-                }
 
-                // Diet prefs
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text("Dietary preferences")
-                        .font(.labelSm)
-                        .foregroundColor(.textMuted)
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Spacing.sm) {
-                        ForEach(["halal", "vegetarian", "gluten_free", "none"], id: \.self) { pref in
-                            WChip(
-                                label: pref == "gluten_free" ? "Gluten-free" :
-                                       pref.prefix(1).uppercased() + pref.dropFirst(),
-                                isSelected: pref == "none" ? vm.dietPrefs.isEmpty : vm.dietPrefs.contains(pref)
-                            ) { vm.toggleDietPref(pref) }
+                        VStack(alignment: .leading, spacing: Spacing.sm) {
+                            Text("Daily time for health")
+                                .font(.labelSm)
+                                .foregroundColor(.textMuted)
+                            HStack(spacing: Spacing.sm) {
+                                ForEach([5, 15, 30], id: \.self) { min in
+                                    WChip(label: "\(min) min", isSelected: vm.dailyMinutes == min) {
+                                        vm.dailyMinutes = min
+                                    }
+                                }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: Spacing.sm) {
+                            Text("Dietary preferences")
+                                .font(.labelSm)
+                                .foregroundColor(.textMuted)
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Spacing.sm) {
+                                ForEach(["halal", "vegetarian", "gluten_free", "none"], id: \.self) { pref in
+                                    WChip(
+                                        label: pref == "gluten_free" ? "Gluten-free" :
+                                               pref.prefix(1).uppercased() + pref.dropFirst(),
+                                        isSelected: pref == "none" ? vm.dietPrefs.isEmpty : vm.dietPrefs.contains(pref)
+                                    ) { vm.toggleDietPref(pref) }
+                                }
+                            }
                         }
                     }
                 }
@@ -385,36 +458,37 @@ struct OnboardingGeneratingScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("Building your plan...")
-                .font(.titleMd)
-            Text("AI is personalizing everything")
-                .font(.bodyMd)
-                .foregroundColor(.textMuted)
+            WSectionHeader(
+                eyebrow: "Generating",
+                title: "Building your plan",
+                subtitle: "This should only take a moment. We’re turning your inputs into a usable starting plan."
+            )
 
-            VStack(alignment: .leading, spacing: Spacing.md) {
-                ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
-                    HStack(spacing: Spacing.md) {
-                        if vm.plan != nil || i < 2 {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.success)
-                        } else if i == 2 {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                                .frame(width: 20, height: 20)
-                        } else {
-                            Circle()
-                                .stroke(Color.border, lineWidth: 1.5)
-                                .frame(width: 20, height: 20)
+            WHeroCard {
+                VStack(alignment: .leading, spacing: Spacing.md) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+                        HStack(spacing: Spacing.md) {
+                            if vm.plan != nil || i < 2 {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.success)
+                            } else if i == 2 {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                    .frame(width: 20, height: 20)
+                            } else {
+                                Circle()
+                                    .stroke(Color.border, lineWidth: 1.5)
+                                    .frame(width: 20, height: 20)
+                            }
+                            Text(step)
+                                .font(.bodyMd)
+                                .foregroundColor(i <= 2 ? .primary : .textMuted)
                         }
-                        Text(step)
-                            .font(.bodyMd)
-                            .foregroundColor(i <= 2 ? .primary : .textMuted)
                     }
                 }
             }
 
             if let plan = vm.plan {
-                Divider()
                 HStack(spacing: Spacing.md) {
                     WStatCard(value: "\(plan.calorieTarget)", label: "cal / day",
                               valueColor: .brandGreen)
@@ -436,16 +510,22 @@ struct OnboardingResultScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("Meet your coach")
-                .font(.titleMd)
-            Text("Your plan is ready")
-                .font(.bodyMd)
-                .foregroundColor(.textMuted)
+            WSectionHeader(
+                eyebrow: "Ready",
+                title: "Meet your coach",
+                subtitle: "Your first plan is ready. You can start with this immediately and adjust it over time."
+            )
 
             if let plan = vm.plan {
-                WCoachBubble(message: plan.coachMessage)
-
-                Divider()
+                WHeroCard {
+                    VStack(alignment: .leading, spacing: Spacing.md) {
+                        WCoachBubble(message: plan.coachMessage)
+                        HStack(spacing: Spacing.md) {
+                            WStatCard(value: "\(plan.calorieTarget)", label: "daily cal", valueColor: .brandGreen)
+                            WStatCard(value: String(format: "%.1f", plan.weeklyLossKg), label: "kg / week", valueColor: .brandPurple)
+                        }
+                    }
+                }
 
                 VStack(spacing: Spacing.sm) {
                     resultRow(

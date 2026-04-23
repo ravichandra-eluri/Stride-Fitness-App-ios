@@ -16,6 +16,7 @@ class MealPlanViewModel {
     var selectedFilter = "similar_calories"
     var error: String?
     var noProfile = false
+    var swapSelectionKey: String?
 
     var currentDayPlan: DayPlan? {
         plan?.days.first { $0.day == selectedDay }
@@ -66,6 +67,7 @@ class MealPlanViewModel {
         swapTargetMeal = meal
         isSwapping = true
         swapAlternatives = []
+        swapSelectionKey = nil
         do {
             let res = try await APIClient.shared.swapMeal(
                 mealPlanID: "", day: selectedDay,
@@ -92,6 +94,7 @@ class MealPlanViewModel {
         plan = WeeklyMealPlan(week: plan!.week, days: days, avgDailyCalories: plan!.avgDailyCalories)
         swapTargetMeal = nil
         swapAlternatives = []
+        swapSelectionKey = nil
         Haptics.notify(.success)
     }
 }
@@ -127,7 +130,13 @@ struct MealPlanView: View {
         }
         .sheet(isPresented: .init(
             get: { vm.swapTargetMeal != nil },
-            set: { if !$0 { vm.swapTargetMeal = nil; vm.swapAlternatives = [] } }
+            set: {
+                if !$0 {
+                    vm.swapTargetMeal = nil
+                    vm.swapAlternatives = []
+                    vm.swapSelectionKey = nil
+                }
+            }
         )) {
             MealSwapSheet(vm: vm)
                 .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
@@ -166,6 +175,27 @@ struct MealPlanView: View {
             ScrollView {
                 VStack(spacing: Spacing.sm) {
                     if let day = vm.currentDayPlan {
+                        WHeroCard {
+                            HStack(alignment: .center) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(day.day)
+                                        .font(.titleMd)
+                                    Text("Planned around your current goal")
+                                        .font(.bodySm)
+                                        .foregroundColor(.textMuted)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text("\(day.totalCalories)")
+                                        .font(.numericMd)
+                                        .foregroundColor(.brandGreen)
+                                    Text("cal total")
+                                        .font(.bodySm)
+                                        .foregroundColor(.textMuted)
+                                }
+                            }
+                        }
+
                         ForEach(day.meals) { meal in
                             mealCard(meal)
                         }
@@ -193,7 +223,7 @@ struct MealPlanView: View {
                 .padding(Spacing.md)
             }
         }
-        .background(Color.appBackground)
+        .background(Color.clear)
     }
 
     private var emptyMealPlanView: some View {
@@ -211,9 +241,9 @@ struct MealPlanView: View {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(meal.mealType.capitalized)
+                        Label(meal.mealType.capitalized, systemImage: mealIcon(meal.mealType))
                             .font(.labelSm)
-                            .foregroundColor(.textMuted)
+                            .foregroundColor(mealTint(meal.mealType))
                         Text(meal.name)
                             .font(.labelMd)
                     }
@@ -243,13 +273,32 @@ struct MealPlanView: View {
             }
         }
     }
+
+    private func mealIcon(_ type: String) -> String {
+        switch type.lowercased() {
+        case "breakfast": return "sunrise.fill"
+        case "lunch": return "sun.max.fill"
+        case "snack": return "leaf.fill"
+        case "dinner": return "moon.stars.fill"
+        default: return "fork.knife"
+        }
+    }
+
+    private func mealTint(_ type: String) -> Color {
+        switch type.lowercased() {
+        case "breakfast": return .warning
+        case "lunch": return .brandGreen
+        case "snack": return .brandPurple
+        case "dinner": return .infoText
+        default: return .textMuted
+        }
+    }
 }
 
 // ── Meal Swap Sheet ───────────────────────────────────────────────────────────
 
 struct MealSwapSheet: View {
     var vm: MealPlanViewModel
-    @State private var selectedAlternative: Meal?
 
     let filters = [
         ("similar_calories", "Similar cal"),
@@ -314,9 +363,9 @@ struct MealSwapSheet: View {
     }
 
     private func alternativeCard(_ meal: Meal) -> some View {
-        let isSelected = selectedAlternative?.name == meal.name
+        let isSelected = vm.swapSelectionKey == selectionKey(for: meal)
         return Button {
-            selectedAlternative = meal
+            vm.swapSelectionKey = selectionKey(for: meal)
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -342,5 +391,14 @@ struct MealSwapSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    private var selectedAlternative: Meal? {
+        guard let key = vm.swapSelectionKey else { return nil }
+        return vm.swapAlternatives.first { selectionKey(for: $0) == key }
+    }
+
+    private func selectionKey(for meal: Meal) -> String {
+        "\(meal.name)|\(meal.mealType)|\(meal.calories)"
     }
 }

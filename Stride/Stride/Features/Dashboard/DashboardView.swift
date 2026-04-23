@@ -70,16 +70,30 @@ class DashboardViewModel {
     /// Optimistically remove the entry locally, then tell the server. On
     /// failure we reload from source of truth so state stays consistent.
     func deleteEntry(_ entry: FoodEntry) async {
-        let originalEntries = todayLog?.entries ?? []
+        let originalLog = todayLog
         if let idx = todayLog?.entries?.firstIndex(where: { $0.id == entry.id }) {
             todayLog?.entries?.remove(at: idx)
+            if todayLog?.entries?.isEmpty == true {
+                todayLog?.entries = []
+            }
+            if let log = todayLog?.log {
+                todayLog?.log = DailyLog(
+                    id: log.id,
+                    caloriesEaten: max(log.caloriesEaten - entry.calories, 0),
+                    proteinG: max(log.proteinG - entry.proteinG, 0),
+                    carbsG: max(log.carbsG - entry.carbsG, 0),
+                    fatG: max(log.fatG - entry.fatG, 0),
+                    onPlan: log.onPlan,
+                    streakDay: log.streakDay
+                )
+            }
             Haptics.impact(.light)
         }
         do {
             try await APIClient.shared.deleteFoodEntry(id: entry.id)
             await load()
         } catch {
-            todayLog?.entries = originalEntries
+            todayLog = originalLog
             Haptics.notify(.error)
             print("[Dashboard] delete failed: \(error)")
         }
@@ -172,8 +186,7 @@ struct DashboardView: View {
                     .buttonStyle(.plain)
                 }
 
-                // Calorie ring + macros
-                WCard {
+                WHeroCard {
                     HStack(spacing: Spacing.lg) {
                         WCalorieRing(eaten: vm.caloriesEaten, target: vm.calorieTarget)
                             .frame(width: 100, height: 100)
@@ -215,9 +228,11 @@ struct DashboardView: View {
 
                 // Today's food entries
                 VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text("Today's food")
-                        .font(.titleSm)
-                        .padding(.horizontal, Spacing.xs)
+                    WSectionHeader(
+                        eyebrow: "Today",
+                        title: "Food log",
+                        subtitle: "Long-press any entry to remove it from today’s totals."
+                    )
 
                     if let entries = vm.todayLog?.entries, !entries.isEmpty {
                         WCard(padding: 0) {
@@ -250,7 +265,7 @@ struct DashboardView: View {
             }
             .padding(Spacing.md)
         }
-        .background(Color.appBackground)
+        .background(Color.clear)
         .refreshable { await vm.load() }
     }
 

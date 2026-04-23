@@ -41,6 +41,29 @@ struct OnboardingPlanResponse: Decodable {
     let goalDate: String
     let coachMessage: String
     let planSummary: String
+
+    private enum CodingKeys: String, CodingKey {
+        case calorieTarget
+        case proteinTarget
+        case carbsTarget
+        case fatTarget
+        case weeklyLossKg
+        case goalDate
+        case coachMessage
+        case planSummary
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        calorieTarget = try container.decode(Int.self, forKey: .calorieTarget)
+        proteinTarget = try container.decodeIfPresent(Int.self, forKey: .proteinTarget) ?? 0
+        carbsTarget = try container.decodeIfPresent(Int.self, forKey: .carbsTarget) ?? 0
+        fatTarget = try container.decodeIfPresent(Int.self, forKey: .fatTarget) ?? 0
+        weeklyLossKg = try container.decodeIfPresent(Double.self, forKey: .weeklyLossKg) ?? 0
+        goalDate = try container.decodeIfPresent(String.self, forKey: .goalDate) ?? "Goal date coming soon"
+        coachMessage = try container.decodeIfPresent(String.self, forKey: .coachMessage) ?? "Your plan is ready. Start with one consistent day and build from there."
+        planSummary = try container.decodeIfPresent(String.self, forKey: .planSummary) ?? "Your calorie target and meal plan are ready. We’ll keep refining your guidance as you log progress."
+    }
 }
 
 // ── Meal plan ─────────────────────────────────────────────────────────────────
@@ -135,10 +158,34 @@ struct WeightEntry: Decodable, Identifiable {
     var id: String { loggedAt }
     let weightKg: Double
     let loggedAt: String
+
+    var loggedAtDate: Date {
+        if let date = DateFormatters.iso8601WithFractional.date(from: loggedAt) {
+            return date
+        }
+        if let date = DateFormatters.iso8601.date(from: loggedAt) {
+            return date
+        }
+        return .distantPast
+    }
 }
 
 // ── Subscription ─────────────────────────────────────────────────────────────
 
 struct SubscriptionStatus: Decodable {
     let status: String // active | expired | free_trial
+}
+
+private enum DateFormatters {
+    static let iso8601WithFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
