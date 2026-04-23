@@ -1,0 +1,144 @@
+import Foundation
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+struct AuthResponse: Decodable {
+    let accessToken: String
+    let refreshToken: String
+    let userID: String
+    let isNewUser: Bool
+}
+
+// ── Profile ───────────────────────────────────────────────────────────────────
+
+struct UserProfile: Codable {
+    var name: String
+    var age: Int
+    var gender: String
+    var heightCm: Int
+    var currentWeightKg: Double
+    var goalWeightKg: Double
+    var timelineMonths: Int
+    var activityLevel: String
+    var dailyMinutes: Int
+    var dietPrefs: [String]
+    var primaryGoal: String
+    var calorieTarget: Int
+    var proteinTargetG: Int
+    var carbsTargetG: Int
+    var fatTargetG: Int
+    var goalDate: String?
+}
+
+// ── Onboarding ────────────────────────────────────────────────────────────────
+
+struct OnboardingPlanResponse: Decodable {
+    let calorieTarget: Int
+    let proteinTarget: Int
+    let carbsTarget: Int
+    let fatTarget: Int
+    let weeklyLossKg: Double
+    let goalDate: String
+    let coachMessage: String
+    let planSummary: String
+}
+
+// ── Meal plan ─────────────────────────────────────────────────────────────────
+
+struct Meal: Codable, Identifiable {
+    var id: String { name + mealType }
+    let name: String
+    let calories: Int
+    let proteinG: Int
+    let carbsG: Int
+    let fatG: Int
+    let prepMinutes: Int
+    let mealType: String // breakfast | lunch | snack | dinner
+}
+
+struct DayPlan: Codable, Identifiable {
+    var id: String { day }
+    let day: String
+    let meals: [Meal]
+    let totalCalories: Int
+}
+
+struct WeeklyMealPlan: Codable {
+    let week: String
+    let days: [DayPlan]
+    let avgDailyCalories: Int
+}
+
+struct MealSwapResponse: Decodable {
+    let alternatives: [Meal]
+}
+
+// ── Daily log ─────────────────────────────────────────────────────────────────
+
+struct DailyLog: Decodable {
+    let id: String
+    let caloriesEaten: Int
+    let proteinG: Double
+    let carbsG: Double
+    let fatG: Double
+    let onPlan: Bool
+    let streakDay: Int
+}
+
+struct FoodEntry: Codable, Identifiable {
+    var id: String = UUID().uuidString
+    var mealType: String
+    var foodName: String
+    var calories: Int
+    var proteinG: Double
+    var carbsG: Double
+    var fatG: Double
+    var servingSize: String
+    var logMethod: String // barcode | photo | manual | plan
+    var barcode: String?
+}
+
+struct LogFoodResponse: Decodable {
+    let entryId: String
+    let totalCalories: Int
+    let totalProtein: Double
+    let totalCarbs: Double
+    let totalFat: Double
+}
+
+struct TodayLogResponse: Decodable {
+    let log: DailyLog?
+    let entries: [FoodEntry]?
+}
+
+// ── Coach ─────────────────────────────────────────────────────────────────────
+
+struct CoachMessage: Decodable, Identifiable {
+    let id: String
+    let message: String
+    let tip: String
+    let priorityMeal: String?
+    let tone: String
+}
+
+// ── Progress ──────────────────────────────────────────────────────────────────
+
+struct WeeklySummary: Decodable {
+    let avgCalories: Int
+    let avgProteinG: Double
+    let daysOnPlan: Int
+    let daysLogged: Int
+    let bestStreak: Int
+}
+
+struct WeightEntry: Decodable, Identifiable {
+    var id: String { loggedAt }
+    let weightKg: Double
+    let loggedAt: String
+}
+
+// ── Subscription ─────────────────────────────────────────────────────────────
+
+struct SubscriptionStatus: Decodable {
+    let status: String // active | expired | free_trial
+}
