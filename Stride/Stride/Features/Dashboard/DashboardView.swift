@@ -15,7 +15,10 @@ struct MainTabView: View {
                 .tabItem { Label("Meals", systemImage: "fork.knife") }
                 .tag(1)
 
-            LogFoodView()
+            LogFoodView(onLogged: {
+                // Jump back to Home so the user sees their updated totals.
+                withAnimation { selectedTab = 0 }
+            })
                 .tabItem { Label("Log", systemImage: "plus.circle.fill") }
                 .tag(2)
 
@@ -106,6 +109,7 @@ struct DashboardView: View {
     @State private var vm = DashboardViewModel()
     @State private var showProfile = false
     @State private var showOnboarding = false
+    @State private var showCalorieDetail = false
 
     var body: some View {
         NavigationStack {
@@ -136,6 +140,11 @@ struct DashboardView: View {
         .sheet(isPresented: $showOnboarding) {
             OnboardingFlowView(onComplete: { showOnboarding = false })
                 .onDisappear { Task { await vm.load() } }
+        }
+        .sheet(isPresented: $showCalorieDetail) {
+            CalorieDetailSheet(vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -186,27 +195,36 @@ struct DashboardView: View {
                     .buttonStyle(.plain)
                 }
 
-                WHeroCard {
-                    HStack(spacing: Spacing.lg) {
-                        WCalorieRing(eaten: vm.caloriesEaten, target: vm.calorieTarget)
-                            .frame(width: 100, height: 100)
+                Button {
+                    showCalorieDetail = true
+                    Haptics.impact(.light)
+                } label: {
+                    WHeroCard {
+                        HStack(spacing: Spacing.lg) {
+                            WCalorieRing(eaten: vm.caloriesEaten, target: vm.calorieTarget)
+                                .frame(width: 100, height: 100)
 
-                        VStack(alignment: .leading, spacing: Spacing.sm) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("\(vm.calorieTarget) cal target")
-                                    .font(.labelMd)
-                                HStack(spacing: Spacing.md) {
-                                    Text("Eaten: \(vm.caloriesEaten)")
-                                    Text("Left: \(vm.caloriesLeft)")
+                            VStack(alignment: .leading, spacing: Spacing.sm) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(vm.calorieTarget) cal target")
+                                        .font(.labelMd)
+                                    HStack(spacing: Spacing.md) {
+                                        Text("Eaten: \(vm.caloriesEaten)")
+                                        Text("Left: \(vm.caloriesLeft)")
+                                    }
+                                    .font(.bodySm)
+                                    .foregroundColor(.textMuted)
                                 }
-                                .font(.bodySm)
-                                .foregroundColor(.textMuted)
+                                WMacroRow(protein: vm.protein, carbs: vm.carbs, fat: vm.fat)
                             }
-                            WMacroRow(protein: vm.protein, carbs: vm.carbs, fat: vm.fat)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.textMuted)
                         }
-                        Spacer()
                     }
                 }
+                .buttonStyle(.plain)
 
                 // Coach message
                 if let msg = vm.coachMessage {
@@ -311,6 +329,99 @@ struct DashboardView: View {
         case "snack":     return .brandPurple
         case "dinner":    return .infoText
         default:          return .textMuted
+        }
+    }
+}
+
+// ── Calorie detail sheet ─────────────────────────────────────────────────────
+// Tapped from the Home hero card — gives a full breakdown of today's totals
+// plus the list of entries that add up to the "Eaten" number.
+
+struct CalorieDetailSheet: View {
+    let vm: DashboardViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: Spacing.lg) {
+                    // Big ring up top
+                    WCalorieRing(eaten: vm.caloriesEaten, target: vm.calorieTarget)
+                        .frame(width: 180, height: 180)
+                        .padding(.top, Spacing.lg)
+
+                    // Three-up numbers
+                    HStack(spacing: Spacing.sm) {
+                        WStatCard(value: "\(vm.calorieTarget)", label: "Target", valueColor: .primary)
+                        WStatCard(value: "\(vm.caloriesEaten)", label: "Eaten",  valueColor: .brandGreen)
+                        WStatCard(
+                            value: "\(vm.caloriesLeft)",
+                            label: vm.caloriesEaten > vm.calorieTarget ? "Over" : "Left",
+                            valueColor: vm.caloriesEaten > vm.calorieTarget ? .danger : .brandPurple
+                        )
+                    }
+                    .padding(.horizontal, Spacing.md)
+
+                    // Macros
+                    WCard {
+                        VStack(alignment: .leading, spacing: Spacing.md) {
+                            Text("Macros so far")
+                                .font(.labelMd)
+                            WMacroRow(protein: vm.protein, carbs: vm.carbs, fat: vm.fat)
+                        }
+                    }
+                    .padding(.horizontal, Spacing.md)
+
+                    // Entries list
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        Text("What you logged")
+                            .font(.labelMd)
+                            .padding(.horizontal, Spacing.md)
+
+                        if let entries = vm.todayLog?.entries, !entries.isEmpty {
+                            WCard(padding: 0) {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(entry.foodName).font(.labelMd)
+                                                Text(entry.mealType.capitalized)
+                                                    .font(.bodySm)
+                                                    .foregroundColor(.textMuted)
+                                            }
+                                            Spacer()
+                                            Text("\(entry.calories) cal")
+                                                .font(.labelSm)
+                                                .foregroundColor(.textMuted)
+                                        }
+                                        .padding(.horizontal, Spacing.md)
+                                        .padding(.vertical, Spacing.sm)
+                                        if i < entries.count - 1 {
+                                            Divider().padding(.leading, Spacing.md)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, Spacing.md)
+                        } else {
+                            Text("Nothing logged yet today.")
+                                .font(.bodyMd)
+                                .foregroundColor(.textMuted)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, Spacing.lg)
+                        }
+                    }
+                }
+                .padding(.bottom, Spacing.xl)
+            }
+            .background(Color.appBackground)
+            .navigationTitle("Today's calories")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }

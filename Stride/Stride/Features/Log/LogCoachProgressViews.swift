@@ -8,10 +8,11 @@ import Charts
 
 class LogFoodViewModel {
     var foodName: String = ""
-    var calories: Int = 0
-    var proteinG: Double = 0
-    var carbsG: Double = 0
-    var fatG: Double = 0
+    // Optional so a fresh field renders empty (placeholder) instead of "0".
+    var calories: Int? = nil
+    var proteinG: Double? = nil
+    var carbsG: Double? = nil
+    var fatG: Double? = nil
     var mealType: String = "lunch"
     var servingSize: String = "1 serving"
     var logMethod: String = "manual"
@@ -19,32 +20,37 @@ class LogFoodViewModel {
     var successMessage: String?
     var error: String?
 
-    var isValid: Bool { !foodName.isEmpty && calories > 0 }
+    var isValid: Bool { !foodName.isEmpty && (calories ?? 0) > 0 }
 
-    func logFood() async {
-        guard isValid else { return }
+    func logFood() async -> Bool {
+        guard isValid else { return false }
         isLogging = true
         error = nil
         let entry = FoodEntry(
             mealType: mealType, foodName: foodName,
-            calories: calories, proteinG: proteinG,
-            carbsG: carbsG, fatG: fatG,
+            calories: calories ?? 0,
+            proteinG: proteinG ?? 0,
+            carbsG: carbsG ?? 0,
+            fatG: fatG ?? 0,
             servingSize: servingSize, logMethod: logMethod
         )
+        defer { isLogging = false }
         do {
             let res = try await APIClient.shared.logFood(entry)
             Haptics.notify(.success)
             successMessage = "Logged! Total today: \(res.totalCalories) cal"
             reset()
+            return true
         } catch {
             Haptics.notify(.error)
             self.error = error.localizedDescription
+            return false
         }
-        isLogging = false
     }
 
     func reset() {
-        foodName = ""; calories = 0; proteinG = 0; carbsG = 0; fatG = 0
+        foodName = ""
+        calories = nil; proteinG = nil; carbsG = nil; fatG = nil
         servingSize = "1 serving"
     }
 }
@@ -53,8 +59,15 @@ struct LogFoodView: View {
     @State private var vm = LogFoodViewModel()
     @State private var showComingSoon = false
     @State private var comingSoonTitle = ""
+    @FocusState private var focusedField: Field?
+
+    /// Called after a successful log. Parent (MainTabView) switches to Home
+    /// so the user immediately sees the updated totals.
+    var onLogged: (() -> Void)? = nil
 
     let mealTypes = ["breakfast", "lunch", "snack", "dinner"]
+
+    enum Field: Hashable { case foodName, calories, serving, protein, carbs, fat }
 
     var body: some View {
         NavigationStack {
@@ -74,6 +87,7 @@ struct LogFoodView: View {
                             VStack(alignment: .leading, spacing: Spacing.md) {
                                 formField("Food name") {
                                     TextField("e.g. Chicken rice bowl", text: $vm.foodName)
+                                        .focused($focusedField, equals: .foodName)
                                 }
                                 formField("Meal type") {
                                     Picker("", selection: $vm.mealType) {
@@ -85,25 +99,30 @@ struct LogFoodView: View {
                                 }
                                 HStack(spacing: Spacing.md) {
                                     formField("Calories") {
-                                        TextField("0", value: $vm.calories, format: .number)
+                                        TextField("e.g. 450", value: $vm.calories, format: .number)
                                             .keyboardType(.numberPad)
+                                            .focused($focusedField, equals: .calories)
                                     }
                                     formField("Serving") {
                                         TextField("1 serving", text: $vm.servingSize)
+                                            .focused($focusedField, equals: .serving)
                                     }
                                 }
                                 HStack(spacing: Spacing.md) {
                                     formField("Protein (g)") {
                                         TextField("0", value: $vm.proteinG, format: .number)
                                             .keyboardType(.decimalPad)
+                                            .focused($focusedField, equals: .protein)
                                     }
                                     formField("Carbs (g)") {
                                         TextField("0", value: $vm.carbsG, format: .number)
                                             .keyboardType(.decimalPad)
+                                            .focused($focusedField, equals: .carbs)
                                     }
                                     formField("Fat (g)") {
                                         TextField("0", value: $vm.fatG, format: .number)
                                             .keyboardType(.decimalPad)
+                                            .focused($focusedField, equals: .fat)
                                     }
                                 }
                             }
@@ -126,15 +145,26 @@ struct LogFoodView: View {
                     }
 
                     WButton(title: "Log food", isLoading: vm.isLogging) {
-                        Task { await vm.logFood() }
+                        Task {
+                            focusedField = nil
+                            let ok = await vm.logFood()
+                            if ok { onLogged?() }
+                        }
                     }
                     .disabled(!vm.isValid)
                     .opacity(vm.isValid ? 1 : 0.5)
                 }
                 .padding(Spacing.md)
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Log food")
             .background(Color.appBackground)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                }
+            }
         }
         .alert(comingSoonTitle, isPresented: $showComingSoon) {
             Button("OK", role: .cancel) { vm.logMethod = "manual" }
