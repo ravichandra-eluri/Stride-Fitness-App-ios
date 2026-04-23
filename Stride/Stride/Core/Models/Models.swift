@@ -72,11 +72,17 @@ struct Meal: Codable, Identifiable {
     var id: String { name + mealType }
     let name: String
     let calories: Int
-    let proteinG: Int
-    let carbsG: Int
-    let fatG: Int
-    let prepMinutes: Int
+    // Backend sends these as floats (e.g. 14.5). Decoding as Int would fail
+    // and kill the whole meal-plan response, so keep them as Double and
+    // format for display at the view layer.
+    let proteinG: Double
+    let carbsG: Double
+    let fatG: Double
+    // Claude prompt doesn't yet ask for prep time, so treat as optional.
+    let prepMinutes: Int?
     let mealType: String // breakfast | lunch | snack | dinner
+    let description: String?
+    let ingredients: [String]?
 }
 
 struct DayPlan: Codable, Identifiable {

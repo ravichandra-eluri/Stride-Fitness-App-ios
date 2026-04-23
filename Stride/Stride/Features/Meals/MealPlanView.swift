@@ -269,11 +269,13 @@ struct MealPlanView: View {
                 }
                 HStack(spacing: Spacing.lg) {
                     Text("\(meal.calories) cal").font(.bodySm).foregroundColor(.textMuted)
-                    Text("P \(meal.proteinG)g").font(.bodySm).foregroundColor(.textMuted)
-                    Text("C \(meal.carbsG)g").font(.bodySm).foregroundColor(.textMuted)
-                    Text("F \(meal.fatG)g").font(.bodySm).foregroundColor(.textMuted)
+                    Text("P \(Int(meal.proteinG))g").font(.bodySm).foregroundColor(.textMuted)
+                    Text("C \(Int(meal.carbsG))g").font(.bodySm).foregroundColor(.textMuted)
+                    Text("F \(Int(meal.fatG))g").font(.bodySm).foregroundColor(.textMuted)
                     Spacer()
-                    Text("\(meal.prepMinutes) min").font(.bodySm).foregroundColor(.textMuted)
+                    if let prep = meal.prepMinutes {
+                        Text("\(prep) min").font(.bodySm).foregroundColor(.textMuted)
+                    }
                 }
             }
         }
@@ -377,8 +379,10 @@ struct MealSwapSheet: View {
                     Text(meal.name).font(.labelMd)
                     HStack(spacing: Spacing.sm) {
                         Text("\(meal.calories) cal").font(.bodySm)
-                        Text("P \(meal.proteinG)g").font(.bodySm)
-                        Text("\(meal.prepMinutes) min").font(.bodySm)
+                        Text("P \(Int(meal.proteinG))g").font(.bodySm)
+                        if let prep = meal.prepMinutes {
+                            Text("\(prep) min").font(.bodySm)
+                        }
                     }
                     .foregroundColor(isSelected ? .infoText : .textMuted)
                 }
