@@ -20,17 +20,13 @@ struct RootView: View {
     @Environment(AppState.self) var appState
 
     var body: some View {
-        Group {
-            switch appState.route {
-            case .auth:
-                AuthView()
-            case .onboarding:
-                OnboardingFlowView()
-            case .main:
-                MainTabView()
-            }
+        if appState.route == .auth {
+            AuthView()
+        } else if appState.route == .onboarding {
+            AnyView(OnboardingFlowView())
+        } else {
+            AnyView(MainTabView())
         }
-        .animation(.easeInOut(duration: 0.3), value: appState.route)
     }
 }
 

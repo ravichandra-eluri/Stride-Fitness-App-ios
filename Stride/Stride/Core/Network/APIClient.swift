@@ -71,7 +71,7 @@ actor APIClient {
             throw APIError.networkError(URLError(.badServerResponse))
         }
 
-        if http.statusCode == 401 {
+        if http.statusCode == 401 && requiresAuth {
             // Token expired mid-request — try refresh once
             try await refreshTokens()
             return try await request(method, path: path, body: body, requiresAuth: requiresAuth)

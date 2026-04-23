@@ -47,11 +47,8 @@ class OnboardingViewModel {
         }
     }
 
-    func generatePlan() async {
-        isGenerating = true
-        error = nil
-
-        let profile = UserProfile(
+    var buildProfile: UserProfile {
+        UserProfile(
             name: name, age: age, gender: gender,
             heightCm: heightCm, currentWeightKg: currentWeight,
             goalWeightKg: goalWeight, timelineMonths: timelineMonths,
@@ -59,12 +56,17 @@ class OnboardingViewModel {
             dietPrefs: Array(dietPrefs), primaryGoal: goal,
             calorieTarget: 0, proteinTargetG: 0, carbsTargetG: 0, fatTargetG: 0
         )
+    }
+
+    func generatePlan() async {
+        isGenerating = true
+        error = nil
 
         do {
-            plan = try await APIClient.shared.completeOnboarding(profile: profile)
+            plan = try await APIClient.shared.completeOnboarding(profile: buildProfile)
             withAnimation { currentStep = 4 } // jump to result screen
         } catch {
-            self.error = error.localizedDescription
+            self.error = "Could not generate your plan right now. You can retry or skip and set up later."
         }
         isGenerating = false
     }
@@ -75,6 +77,7 @@ class OnboardingViewModel {
 struct OnboardingFlowView: View {
     @Environment(AppState.self) var appState
     @State private var vm = OnboardingViewModel()
+    var onComplete: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -97,13 +100,15 @@ struct OnboardingFlowView: View {
 
             // Steps
             TabView(selection: $vm.currentStep) {
-                OnboardingGoalScreen(vm: vm).tag(0)
-                OnboardingBodyScreen(vm: vm).tag(1)
-                OnboardingLifestyleScreen(vm: vm).tag(2)
-                OnboardingGeneratingScreen(vm: vm).tag(3)
-                OnboardingResultScreen(vm: vm) {
-                    appState.completeOnboarding()
-                }.tag(4)
+                AnyView(OnboardingGoalScreen(vm: vm)).tag(0)
+                AnyView(OnboardingBodyScreen(vm: vm)).tag(1)
+                AnyView(OnboardingLifestyleScreen(vm: vm) {
+                    onComplete?() ?? appState.completeOnboarding()
+                }).tag(2)
+                AnyView(OnboardingGeneratingScreen(vm: vm)).tag(3)
+                AnyView(OnboardingResultScreen(vm: vm) {
+                    onComplete?() ?? appState.completeOnboarding()
+                }).tag(4)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut, value: vm.currentStep)
@@ -266,6 +271,7 @@ struct OnboardingBodyScreen: View {
 
 struct OnboardingLifestyleScreen: View {
     @Bindable var vm: OnboardingViewModel
+    var onSkip: () -> Void
 
     var body: some View {
         ScrollView {
@@ -345,12 +351,17 @@ struct OnboardingLifestyleScreen: View {
                     }
                 }
 
-                WButton(title: "Build my plan", isLoading: vm.isGenerating) {
+                WButton(title: vm.error != nil ? "Retry" : "Build my plan", isLoading: vm.isGenerating) {
                     Task { await vm.generatePlan() }
                 }
 
                 if let error = vm.error {
-                    Text(error).font(.bodySm).foregroundColor(.danger)
+                    Text(error)
+                        .font(.bodySm)
+                        .foregroundColor(.danger)
+                        .multilineTextAlignment(.center)
+
+                    WButtonOutline(title: "Skip for now") { onSkip() }
                 }
             }
             .padding(Spacing.lg)

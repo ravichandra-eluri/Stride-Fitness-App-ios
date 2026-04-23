@@ -111,26 +111,22 @@ struct AuthView: View {
             isLoading = true
             error = nil
 
-            Task {
+            Task { @MainActor in
                 do {
                     let res = try await APIClient.shared.signInWithApple(
                         identityToken: token,
                         email: email,
                         fullName: fullName
                     )
-                    await MainActor.run {
-                        appState.signIn(
-                            userID: res.userID,
-                            accessToken: res.accessToken,
-                            refreshToken: res.refreshToken,
-                            isNewUser: res.isNewUser
-                        )
-                    }
+                    appState.signIn(
+                        userID: res.userId,
+                        accessToken: res.accessToken,
+                        refreshToken: res.refreshToken,
+                        isNewUser: res.isNewUser
+                    )
                 } catch {
-                    await MainActor.run {
-                        self.error = error.localizedDescription
-                        isLoading = false
-                    }
+                    self.error = error.localizedDescription
+                    isLoading = false
                 }
             }
         }
