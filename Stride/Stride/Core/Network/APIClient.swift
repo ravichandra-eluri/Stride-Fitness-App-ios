@@ -15,23 +15,54 @@ enum APIError: LocalizedError {
         switch self {
         case .invalidURL:          return "Invalid URL"
         case .unauthorized:        return "Please sign in again"
-        case .serverError(let c, let m): return "Server error \(c): \(m)"
-        case .decodingError(let e):return "Decode error: \(e)"
+        case .serverError(_, let m): return friendlyServerMessage(m)
+        case .decodingError:       return "We couldn't read the server response. Please try again."
         case .networkError(let e): return e.localizedDescription
         }
+    }
+
+    private func friendlyServerMessage(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "The server ran into an issue. Please try again." }
+        // If the server sent JSON { "error": "..." }, extract the message.
+        if let data = trimmed.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let message = (obj["error"] ?? obj["message"]) as? String {
+            return message
+        }
+        return trimmed
     }
 }
 
 actor APIClient {
     static let shared = APIClient()
 
-    private let baseURL = "https://stride-backend-zyytfut7bq-uc.a.run.app"
-    private let session = URLSession.shared
+    /// Base URL — read from `STRIDE_API_BASE_URL` in the app's Info.plist so
+    /// the same binary can be retargeted for staging / local dev without a
+    /// code change. Falls back to the production Cloud Run URL.
+    private let baseURL: String = {
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "STRIDE_API_BASE_URL") as? String,
+           !configured.isEmpty {
+            return configured
+        }
+        return "https://stride-backend-zyytfut7bq-uc.a.run.app"
+    }()
+
+    private let session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 120
+        cfg.waitsForConnectivity = true
+        return URLSession(configuration: cfg)
+    }()
+
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
     }()
+
+    private struct EmptyBody: Decodable {}
 
     // ── Core request method ───────────────────────────────────────────────
 
@@ -48,6 +79,7 @@ actor APIClient {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
 
         if requiresAuth {
             let token = try await validAccessToken()
@@ -82,6 +114,11 @@ actor APIClient {
             throw APIError.serverError(http.statusCode, msg)
         }
 
+        // Allow callers to use `EmptyBody` for endpoints that return no payload.
+        if T.self == EmptyBody.self {
+            return EmptyBody() as! T
+        }
+
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
@@ -100,6 +137,10 @@ actor APIClient {
 
     func patch<T: Decodable>(_ path: String, body: Encodable) async throws -> T {
         try await request("PATCH", path: path, body: body)
+    }
+
+    func delete(_ path: String) async throws {
+        let _: EmptyBody = try await request("DELETE", path: path)
     }
 
     // ── Token management ──────────────────────────────────────────────────
@@ -193,6 +234,10 @@ extension APIClient {
 
     func getTodayLog() async throws -> TodayLogResponse {
         try await get("/api/log/today")
+    }
+
+    func deleteFoodEntry(id: String) async throws {
+        try await delete("/api/log/food/\(id)")
     }
 
     func logWeight(_ kg: Double, note: String = "") async throws {

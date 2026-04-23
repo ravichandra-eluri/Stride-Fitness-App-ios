@@ -9,11 +9,11 @@ struct WCard<Content: View>: View {
     var body: some View {
         content()
             .padding(padding)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: Radius.md))
+            .background(Color.cardSurface)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: Radius.md)
-                    .stroke(Color.border, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                    .stroke(Color.border.opacity(0.6), lineWidth: 0.5)
             )
             .cardShadow()
     }
@@ -23,17 +23,26 @@ struct WCard<Content: View>: View {
 
 struct WButton: View {
     let title: String
+    var icon: String? = nil
     var isLoading: Bool = false
+    var isEnabled: Bool = true
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            Haptics.impact(.light)
+            action()
+        } label: {
             HStack(spacing: Spacing.sm) {
                 if isLoading {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .tint(.white)
-                        .scaleEffect(0.8)
+                        .scaleEffect(0.9)
+                } else if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
                 }
                 Text(title)
                     .font(.labelMd)
@@ -41,10 +50,28 @@ struct WButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .background(Color.brandGreen)
-            .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+            .background(
+                LinearGradient(
+                    colors: [Color.brandGreen, Color.brandGreen.opacity(0.85)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
+            .shadow(color: Color.brandGreen.opacity(0.25), radius: 8, x: 0, y: 4)
+            .opacity(isEnabled ? 1 : 0.5)
         }
-        .disabled(isLoading)
+        .buttonStyle(PressableButtonStyle())
+        .disabled(isLoading || !isEnabled)
+    }
+}
+
+// Subtle scale/opacity reaction on press for every primary button.
+struct PressableButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -52,22 +79,32 @@ struct WButton: View {
 
 struct WButtonOutline: View {
     let title: String
+    var icon: String? = nil
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.labelMd)
-                .foregroundColor(.primary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(Color.white)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Radius.sm)
-                        .stroke(Color.border, lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            HStack(spacing: Spacing.sm) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                Text(title).font(.labelMd)
+            }
+            .foregroundColor(.primary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Color.cardSurface)
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
+                    .stroke(Color.border, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
         }
+        .buttonStyle(PressableButtonStyle())
     }
 }
 
@@ -79,20 +116,23 @@ struct WChip: View {
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
+        Button {
+            Haptics.selection()
+            onTap()
+        } label: {
             Text(label)
                 .font(.labelSm)
-                .foregroundColor(isSelected ? .infoText : .textMuted)
+                .foregroundColor(isSelected ? .white : .textMuted)
                 .padding(.horizontal, Spacing.md)
                 .padding(.vertical, Spacing.sm)
-                .background(isSelected ? Color.infoBg : Color.surface)
+                .background(isSelected ? Color.brandGreen : Color.surface)
                 .overlay(
                     Capsule()
-                        .stroke(isSelected ? Color.infoText.opacity(0.4) : Color.border,
-                                lineWidth: 0.5)
+                        .stroke(isSelected ? Color.clear : Color.border, lineWidth: 0.5)
                 )
                 .clipShape(Capsule())
         }
+        .buttonStyle(PressableButtonStyle())
     }
 }
 
@@ -104,7 +144,7 @@ struct WStatCard: View {
     var valueColor: Color = .primary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(value)
                 .font(.numericMd)
                 .foregroundColor(valueColor)
@@ -114,12 +154,18 @@ struct WStatCard: View {
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+        .background(Color.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
+                .stroke(Color.border.opacity(0.5), lineWidth: 0.5)
+        )
     }
 }
 
 // ── WCalorieRing — circular progress ─────────────────────────────────────────
+// Gradient stroke that shifts from green → amber → red as the user approaches
+// and then exceeds their goal. Lightly animated when progress changes.
 
 struct WCalorieRing: View {
     let eaten: Int
@@ -127,28 +173,45 @@ struct WCalorieRing: View {
 
     private var progress: Double {
         guard target > 0 else { return 0 }
-        return min(Double(eaten) / Double(target), 1.0)
+        return Double(eaten) / Double(target)
     }
 
+    private var clampedProgress: Double { min(progress, 1.0) }
     private var remaining: Int { max(target - eaten, 0) }
+    private var over: Int { max(eaten - target, 0) }
+    private var isOver: Bool { progress > 1.0 }
+
+    private var ringColors: [Color] {
+        if isOver          { return [.danger, .warning] }
+        if progress >= 0.9 { return [.warning, .brandGreen] }
+        return [.brandGreen, .brandGreen.opacity(0.8)]
+    }
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.border, lineWidth: 8)
+                .stroke(Color.border.opacity(0.4), lineWidth: 10)
+
             Circle()
-                .trim(from: 0, to: progress)
+                .trim(from: 0, to: clampedProgress)
                 .stroke(
-                    progress >= 1.0 ? Color.danger : Color.brandGreen,
-                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                    AngularGradient(
+                        colors: ringColors,
+                        center: .center,
+                        startAngle: .degrees(-90),
+                        endAngle: .degrees(270)
+                    ),
+                    style: StrokeStyle(lineWidth: 10, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.6), value: progress)
+                .animation(.spring(response: 0.7, dampingFraction: 0.85), value: clampedProgress)
+
             VStack(spacing: 0) {
-                Text("\(remaining)")
+                Text("\(isOver ? over : remaining)")
                     .font(.numericMd)
-                    .foregroundColor(.primary)
-                Text("left")
+                    .foregroundColor(isOver ? .danger : .primary)
+                    .contentTransition(.numericText())
+                Text(isOver ? "over" : "left")
                     .font(.bodySm)
                     .foregroundColor(.textMuted)
             }
@@ -192,22 +255,37 @@ struct WCoachBubble: View {
         HStack(alignment: .top, spacing: Spacing.sm) {
             ZStack {
                 Circle()
-                    .fill(Color.infoBg)
-                    .frame(width: 32, height: 32)
-                Text("AI")
-                    .font(.labelSm)
-                    .foregroundColor(.infoText)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.brandPurple, Color.brandGreen],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 36, height: 36)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
             }
             Text(message)
                 .font(.bodyMd)
                 .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(Spacing.md)
-                .background(Color.surface)
+                .background(Color.cardSurface)
                 .clipShape(
                     UnevenRoundedRectangle(
-                        topLeadingRadius: 0, bottomLeadingRadius: Radius.sm,
-                        bottomTrailingRadius: Radius.sm, topTrailingRadius: Radius.sm
+                        topLeadingRadius: 2, bottomLeadingRadius: Radius.md,
+                        bottomTrailingRadius: Radius.md, topTrailingRadius: Radius.md,
+                        style: .continuous
                     )
+                )
+                .overlay(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 2, bottomLeadingRadius: Radius.md,
+                        bottomTrailingRadius: Radius.md, topTrailingRadius: Radius.md,
+                        style: .continuous
+                    )
+                    .stroke(Color.border.opacity(0.5), lineWidth: 0.5)
                 )
         }
     }
@@ -238,14 +316,54 @@ struct WErrorView: View {
 
     var body: some View {
         VStack(spacing: Spacing.md) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 36))
+                .foregroundColor(.warning)
             Text("Something went wrong")
                 .font(.titleSm)
             Text(message)
                 .font(.bodyMd)
                 .foregroundColor(.textMuted)
                 .multilineTextAlignment(.center)
-            WButton(title: "Try again", action: retry)
-                .frame(width: 160)
+            WButton(title: "Try again", icon: "arrow.clockwise", action: retry)
+                .frame(width: 200)
+        }
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// ── WEmptyState ──────────────────────────────────────────────────────────────
+// Consistent empty-state scaffold used across tabs.
+
+struct WEmptyState: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    var ctaTitle: String? = nil
+    var ctaAction: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(spacing: Spacing.md) {
+            ZStack {
+                Circle()
+                    .fill(Color.brandGreenBg)
+                    .frame(width: 72, height: 72)
+                Image(systemName: icon)
+                    .font(.system(size: 28))
+                    .foregroundColor(.brandGreen)
+            }
+            Text(title).font(.titleSm)
+            Text(subtitle)
+                .font(.bodyMd)
+                .foregroundColor(.textMuted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            if let ctaTitle, let ctaAction {
+                WButton(title: ctaTitle, action: ctaAction)
+                    .frame(maxWidth: 240)
+                    .padding(.top, Spacing.xs)
+            }
         }
         .padding(Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

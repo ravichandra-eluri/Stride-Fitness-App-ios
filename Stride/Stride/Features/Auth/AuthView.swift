@@ -75,7 +75,7 @@ struct AuthView: View {
             .padding(.horizontal, Spacing.lg)
             .padding(.bottom, Spacing.xxl)
         }
-        .background(Color.white)
+        .background(Color.appBackground)
     }
 
     private func featureRow(icon: String, text: String) -> some View {

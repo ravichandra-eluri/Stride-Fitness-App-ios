@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 // ── Log Food View ─────────────────────────────────────────────────────────────
 
@@ -32,9 +33,11 @@ class LogFoodViewModel {
         )
         do {
             let res = try await APIClient.shared.logFood(entry)
+            Haptics.notify(.success)
             successMessage = "Logged! Total today: \(res.totalCalories) cal"
             reset()
         } catch {
+            Haptics.notify(.error)
             self.error = error.localizedDescription
         }
         isLogging = false
@@ -131,7 +134,7 @@ struct LogFoodView: View {
                 .padding(Spacing.md)
             }
             .navigationTitle("Log food")
-            .background(Color.surface.opacity(0.4))
+            .background(Color.appBackground)
         }
         .alert(comingSoonTitle, isPresented: $showComingSoon) {
             Button("OK", role: .cancel) { vm.logMethod = "manual" }
@@ -248,22 +251,13 @@ struct CoachView: View {
     }
 
     private var emptyCoachView: some View {
-        VStack(spacing: Spacing.lg) {
-            Spacer()
-            Image(systemName: "bubble.left.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.textMuted)
-            Text("No coach message yet")
-                .font(.titleSm)
-            Text("Your daily coaching message will appear here each morning.")
-                .font(.bodyMd)
-                .foregroundColor(.textMuted)
-                .multilineTextAlignment(.center)
-            WButtonOutline(title: "Refresh") { Task { await load() } }
-                .frame(width: 160)
-            Spacer()
-        }
-        .padding(Spacing.lg)
+        WEmptyState(
+            icon: "bubble.left.fill",
+            title: "No coach message yet",
+            subtitle: "Your daily coaching message will appear here each morning.",
+            ctaTitle: "Refresh",
+            ctaAction: { Task { await load() } }
+        )
     }
 
     private func coachContent(_ msg: CoachMessage) -> some View {
@@ -302,7 +296,7 @@ struct CoachView: View {
             }
             .padding(Spacing.md)
         }
-        .background(Color.surface.opacity(0.4))
+        .background(Color.appBackground)
     }
 }
 
@@ -336,9 +330,23 @@ class ProgressViewModel {
     func logWeight() async {
         do {
             try await APIClient.shared.logWeight(newWeight)
+            Haptics.notify(.success)
             showingWeightLogger = false
             await load()
-        } catch { }
+        } catch {
+            Haptics.notify(.error)
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Change from the first logged weight to the most recent, in kg.
+    /// Positive = gained, negative = lost. `nil` until we have ≥2 data points.
+    var weightDelta: Double? {
+        guard let first = weightHistory.first?.weightKg,
+              let last  = weightHistory.last?.weightKg,
+              weightHistory.count >= 2
+        else { return nil }
+        return last - first
     }
 }
 
@@ -386,70 +394,114 @@ struct ProgressTrackingView: View {
                     }
                 }
 
-                // Weight history chart
+                // Weight history
                 if !vm.weightHistory.isEmpty {
                     WCard {
-                        VStack(alignment: .leading, spacing: Spacing.sm) {
-                            Text("Weight over time")
-                                .font(.labelMd)
+                        VStack(alignment: .leading, spacing: Spacing.md) {
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Weight")
+                                        .font(.labelSm)
+                                        .foregroundColor(.textMuted)
+                                    if let latest = vm.weightHistory.last {
+                                        Text(String(format: "%.1f kg", latest.weightKg))
+                                            .font(.numericMd)
+                                    }
+                                }
+                                Spacer()
+                                if let delta = vm.weightDelta {
+                                    weightDeltaBadge(delta)
+                                }
+                            }
                             weightChart
                         }
                     }
                 } else {
                     WCard {
-                        VStack(spacing: Spacing.sm) {
-                            Image(systemName: "scalemass")
-                                .font(.system(size: 32))
-                                .foregroundColor(.textMuted)
-                            Text("Log your weight to see your progress chart")
-                                .font(.bodyMd)
-                                .foregroundColor(.textMuted)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(Spacing.lg)
+                        WEmptyState(
+                            icon: "scalemass",
+                            title: "No weight logged yet",
+                            subtitle: "Tap the scale icon to log your first weight.",
+                            ctaTitle: "Log weight",
+                            ctaAction: { vm.showingWeightLogger = true }
+                        )
+                        .frame(minHeight: 200)
                     }
                 }
             }
             .padding(Spacing.md)
         }
-        .background(Color.surface.opacity(0.4))
+        .background(Color.appBackground)
         .refreshable { await vm.load() }
     }
 
-    private var weightChart: some View {
-        // Simple weight line chart using Canvas
-        // In production replace with Swift Charts (iOS 16+)
-        GeometryReader { geo in
-            let weights = vm.weightHistory.map { $0.weightKg }
-            guard let minW = weights.min(), let maxW = weights.max(), maxW > minW else {
-                return AnyView(
-                    Text("Not enough data yet")
-                        .font(.bodySm)
-                        .foregroundColor(.textMuted)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                )
-            }
-            let range = maxW - minW
-            let points = weights.enumerated().map { i, w -> CGPoint in
-                let x = geo.size.width * CGFloat(i) / CGFloat(weights.count - 1)
-                let y = geo.size.height * CGFloat(1 - (w - minW) / range)
-                return CGPoint(x: x, y: y)
-            }
-            return AnyView(
-                Canvas { ctx, size in
-                    var path = Path()
-                    path.move(to: points[0])
-                    points.dropFirst().forEach { path.addLine(to: $0) }
-                    ctx.stroke(path, with: .color(.brandGreen), lineWidth: 2)
-                    points.forEach { pt in
-                        ctx.fill(Path(ellipseIn: CGRect(x: pt.x-3, y: pt.y-3, width: 6, height: 6)),
-                                 with: .color(.brandGreen))
-                    }
-                }
-            )
+    private func weightDeltaBadge(_ delta: Double) -> some View {
+        let isLoss = delta <= 0
+        let color: Color = isLoss ? .success : .warning
+        let iconName = isLoss ? "arrow.down.right" : "arrow.up.right"
+        return HStack(spacing: 4) {
+            Image(systemName: iconName)
+                .font(.system(size: 12, weight: .semibold))
+            Text(String(format: "%@%.1f kg", isLoss ? "" : "+", delta))
+                .font(.labelSm)
         }
-        .frame(height: 120)
+        .foregroundColor(color)
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    private var weightChart: some View {
+        let entries = vm.weightHistory
+        let weights = entries.map(\.weightKg)
+        let minW = (weights.min() ?? 0) - 1
+        let maxW = (weights.max() ?? 1) + 1
+
+        return Chart {
+            ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+                LineMark(
+                    x: .value("Day", index),
+                    y: .value("Weight", entry.weightKg)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [.brandGreen, .brandPurple],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                )
+                .interpolationMethod(.catmullRom)
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
+
+                AreaMark(
+                    x: .value("Day", index),
+                    y: .value("Weight", entry.weightKg)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.brandGreen.opacity(0.25), Color.brandGreen.opacity(0.0)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.catmullRom)
+
+                PointMark(
+                    x: .value("Day", index),
+                    y: .value("Weight", entry.weightKg)
+                )
+                .foregroundStyle(Color.brandGreen)
+                .symbolSize(28)
+            }
+        }
+        .chartYScale(domain: minW...maxW)
+        .chartXAxis(.hidden)
+        .chartYAxis {
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) {
+                AxisGridLine().foregroundStyle(Color.border.opacity(0.5))
+                AxisValueLabel().font(.bodySm).foregroundStyle(Color.textMuted)
+            }
+        }
+        .frame(height: 160)
     }
 
     private var weightLogSheet: some View {

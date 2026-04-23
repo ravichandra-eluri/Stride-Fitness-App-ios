@@ -92,6 +92,7 @@ class MealPlanViewModel {
         plan = WeeklyMealPlan(week: plan!.week, days: days, avgDailyCalories: plan!.avgDailyCalories)
         swapTargetMeal = nil
         swapAlternatives = []
+        Haptics.notify(.success)
     }
 }
 
@@ -121,7 +122,7 @@ struct MealPlanView: View {
         }
         .task { await vm.load() }
         .sheet(isPresented: $showOnboarding) {
-            AnyView(OnboardingFlowView(onComplete: { showOnboarding = false }))
+            OnboardingFlowView(onComplete: { showOnboarding = false })
                 .onDisappear { Task { await vm.load() } }
         }
         .sheet(isPresented: .init(
@@ -134,24 +135,13 @@ struct MealPlanView: View {
     }
 
     private var noProfileView: some View {
-        VStack(spacing: Spacing.lg) {
-            Spacer()
-            Image(systemName: "person.crop.circle.badge.exclamationmark")
-                .font(.system(size: 48))
-                .foregroundColor(.textMuted)
-            Text("Profile not set up")
-                .font(.titleSm)
-            Text("Complete your profile so we can generate a personalized meal plan for you.")
-                .font(.bodyMd)
-                .foregroundColor(.textMuted)
-                .multilineTextAlignment(.center)
-            WButton(title: "Set up my profile") {
-                showOnboarding = true
-            }
-            .frame(width: 220)
-            Spacer()
-        }
-        .padding(Spacing.lg)
+        WEmptyState(
+            icon: "person.crop.circle.badge.exclamationmark",
+            title: "Profile not set up",
+            subtitle: "Complete your profile so we can generate a personalized meal plan for you.",
+            ctaTitle: "Set up my profile",
+            ctaAction: { showOnboarding = true }
+        )
     }
 
     private var mealPlanContent: some View {
@@ -203,28 +193,17 @@ struct MealPlanView: View {
                 .padding(Spacing.md)
             }
         }
-        .background(Color.surface.opacity(0.4))
+        .background(Color.appBackground)
     }
 
     private var emptyMealPlanView: some View {
-        VStack(spacing: Spacing.lg) {
-            Spacer()
-            Image(systemName: "fork.knife")
-                .font(.system(size: 48))
-                .foregroundColor(.textMuted)
-            Text("No meal plan yet")
-                .font(.titleSm)
-            Text("Your personalized meal plan will appear here once it's generated.")
-                .font(.bodyMd)
-                .foregroundColor(.textMuted)
-                .multilineTextAlignment(.center)
-            WButton(title: "Generate meal plan") {
-                Task { await vm.regenerate() }
-            }
-            .frame(width: 220)
-            Spacer()
-        }
-        .padding(Spacing.lg)
+        WEmptyState(
+            icon: "fork.knife",
+            title: "No meal plan yet",
+            subtitle: "Your personalized weekly plan will appear here once it's generated.",
+            ctaTitle: vm.isRegenerating ? "Generating..." : "Generate meal plan",
+            ctaAction: { Task { await vm.regenerate() } }
+        )
     }
 
     private func mealCard(_ meal: Meal) -> some View {
@@ -354,13 +333,13 @@ struct MealSwapSheet: View {
                     .foregroundColor(isSelected ? .brandGreen : .border)
             }
             .padding(Spacing.md)
-            .background(isSelected ? Color.brandGreenBg : Color.white)
+            .background(isSelected ? Color.brandGreenBg : Color.cardSurface)
             .overlay(
-                RoundedRectangle(cornerRadius: Radius.sm)
+                RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
                     .stroke(isSelected ? Color.brandGreen : Color.border,
                             lineWidth: isSelected ? 1.5 : 0.5)
             )
-            .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
     }

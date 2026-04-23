@@ -7,27 +7,28 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            AnyView(DashboardView())
-                .tabItem { Label("Home",     systemImage: "house.fill") }
+            DashboardView()
+                .tabItem { Label("Home", systemImage: "house.fill") }
                 .tag(0)
 
-            AnyView(MealPlanView())
-                .tabItem { Label("Meals",    systemImage: "fork.knife") }
+            MealPlanView()
+                .tabItem { Label("Meals", systemImage: "fork.knife") }
                 .tag(1)
 
-            AnyView(LogFoodView())
-                .tabItem { Label("Log",      systemImage: "plus.circle.fill") }
+            LogFoodView()
+                .tabItem { Label("Log", systemImage: "plus.circle.fill") }
                 .tag(2)
 
-            AnyView(CoachView())
-                .tabItem { Label("Coach",    systemImage: "bubble.left.fill") }
+            CoachView()
+                .tabItem { Label("Coach", systemImage: "bubble.left.fill") }
                 .tag(3)
 
-            AnyView(ProgressTrackingView())
+            ProgressTrackingView()
                 .tabItem { Label("Progress", systemImage: "chart.line.uptrend.xyaxis") }
                 .tag(4)
         }
         .tint(Color.brandGreen)
+        .onChange(of: selectedTab) { _, _ in Haptics.selection() }
     }
 }
 
@@ -65,6 +66,24 @@ class DashboardViewModel {
     var carbs: Double      { todayLog?.log?.carbsG ?? 0 }
     var fat: Double        { todayLog?.log?.fatG ?? 0 }
     var streakDays: Int    { todayLog?.log?.streakDay ?? 0 }
+
+    /// Optimistically remove the entry locally, then tell the server. On
+    /// failure we reload from source of truth so state stays consistent.
+    func deleteEntry(_ entry: FoodEntry) async {
+        let originalEntries = todayLog?.entries ?? []
+        if let idx = todayLog?.entries?.firstIndex(where: { $0.id == entry.id }) {
+            todayLog?.entries?.remove(at: idx)
+            Haptics.impact(.light)
+        }
+        do {
+            try await APIClient.shared.deleteFoodEntry(id: entry.id)
+            await load()
+        } catch {
+            todayLog?.entries = originalEntries
+            Haptics.notify(.error)
+            print("[Dashboard] delete failed: \(error)")
+        }
+    }
 }
 
 // ── Dashboard View ────────────────────────────────────────────────────────────
@@ -101,7 +120,7 @@ struct DashboardView: View {
             NavigationStack { ProfileView() }
         }
         .sheet(isPresented: $showOnboarding) {
-            AnyView(OnboardingFlowView(onComplete: { showOnboarding = false }))
+            OnboardingFlowView(onComplete: { showOnboarding = false })
                 .onDisappear { Task { await vm.load() } }
         }
     }
@@ -203,20 +222,15 @@ struct DashboardView: View {
                     if let entries = vm.todayLog?.entries, !entries.isEmpty {
                         WCard(padding: 0) {
                             VStack(spacing: 0) {
-                                ForEach(Array(entries.enumerated()), id: \.offset) { i, entry in
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(entry.foodName).font(.labelMd)
-                                            Text(entry.mealType.capitalized).font(.bodySm)
-                                                .foregroundColor(.textMuted)
+                                ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
+                                    foodEntryRow(entry)
+                                        .contextMenu {
+                                            Button(role: .destructive) {
+                                                Task { await vm.deleteEntry(entry) }
+                                            } label: {
+                                                Label("Delete entry", systemImage: "trash")
+                                            }
                                         }
-                                        Spacer()
-                                        Text("\(entry.calories) cal")
-                                            .font(.labelSm)
-                                            .foregroundColor(.textMuted)
-                                    }
-                                    .padding(.horizontal, Spacing.md)
-                                    .padding(.vertical, Spacing.sm)
 
                                     if i < entries.count - 1 {
                                         Divider().padding(.leading, Spacing.md)
@@ -236,8 +250,53 @@ struct DashboardView: View {
             }
             .padding(Spacing.md)
         }
-        .background(Color.surface.opacity(0.4))
+        .background(Color.appBackground)
         .refreshable { await vm.load() }
+    }
+
+    private func foodEntryRow(_ entry: FoodEntry) -> some View {
+        HStack(spacing: Spacing.md) {
+            ZStack {
+                Circle()
+                    .fill(mealColor(entry.mealType).opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Image(systemName: mealIcon(entry.mealType))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(mealColor(entry.mealType))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.foodName).font(.labelMd)
+                Text(entry.mealType.capitalized).font(.bodySm)
+                    .foregroundColor(.textMuted)
+            }
+            Spacer()
+            Text("\(entry.calories) cal")
+                .font(.labelSm)
+                .foregroundColor(.textMuted)
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.sm)
+        .contentShape(Rectangle())
+    }
+
+    private func mealIcon(_ type: String) -> String {
+        switch type.lowercased() {
+        case "breakfast": return "sunrise.fill"
+        case "lunch":     return "sun.max.fill"
+        case "snack":     return "leaf.fill"
+        case "dinner":    return "moon.stars.fill"
+        default:          return "fork.knife"
+        }
+    }
+
+    private func mealColor(_ type: String) -> Color {
+        switch type.lowercased() {
+        case "breakfast": return .warning
+        case "lunch":     return .brandGreen
+        case "snack":     return .brandPurple
+        case "dinner":    return .infoText
+        default:          return .textMuted
+        }
     }
 }
 
@@ -245,15 +304,42 @@ struct DashboardView: View {
 
 struct ProfileView: View {
     @Environment(AppState.self) var appState
+    @Environment(\.dismiss) private var dismiss
+    @State private var profile: UserProfile?
 
     var body: some View {
         List {
+            if let profile {
+                Section {
+                    HStack(spacing: Spacing.md) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.brandGreenBg)
+                                .frame(width: 56, height: 56)
+                            Text(profile.name.prefix(1).uppercased())
+                                .font(.numericMd)
+                                .foregroundColor(.brandGreen)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(profile.name).font(.titleSm)
+                            Text("\(profile.calorieTarget) cal / day target")
+                                .font(.bodySm)
+                                .foregroundColor(.textMuted)
+                        }
+                    }
+                    .padding(.vertical, Spacing.xs)
+                }
+            }
+
             Section("Account") {
                 Label("Settings", systemImage: "gearshape")
                 Label("Notifications", systemImage: "bell")
+                Label("Privacy", systemImage: "hand.raised.fill")
             }
+
             Section {
                 Button(role: .destructive) {
+                    Haptics.notify(.warning)
                     appState.signOut()
                 } label: {
                     Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
@@ -261,5 +347,14 @@ struct ProfileView: View {
             }
         }
         .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { dismiss() }
+            }
+        }
+        .task {
+            profile = try? await APIClient.shared.getProfile()
+        }
     }
 }

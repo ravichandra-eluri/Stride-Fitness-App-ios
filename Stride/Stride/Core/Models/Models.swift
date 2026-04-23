@@ -107,8 +107,8 @@ struct LogFoodResponse: Decodable {
 }
 
 struct TodayLogResponse: Decodable {
-    let log: DailyLog?
-    let entries: [FoodEntry]?
+    var log: DailyLog?
+    var entries: [FoodEntry]?
 }
 
 // ── Coach ─────────────────────────────────────────────────────────────────────

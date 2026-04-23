@@ -100,20 +100,20 @@ struct OnboardingFlowView: View {
 
             // Steps
             TabView(selection: $vm.currentStep) {
-                AnyView(OnboardingGoalScreen(vm: vm)).tag(0)
-                AnyView(OnboardingBodyScreen(vm: vm)).tag(1)
-                AnyView(OnboardingLifestyleScreen(vm: vm) {
+                OnboardingGoalScreen(vm: vm).tag(0)
+                OnboardingBodyScreen(vm: vm).tag(1)
+                OnboardingLifestyleScreen(vm: vm) {
                     onComplete?() ?? appState.completeOnboarding()
-                }).tag(2)
-                AnyView(OnboardingGeneratingScreen(vm: vm)).tag(3)
-                AnyView(OnboardingResultScreen(vm: vm) {
+                }.tag(2)
+                OnboardingGeneratingScreen(vm: vm).tag(3)
+                OnboardingResultScreen(vm: vm) {
                     onComplete?() ?? appState.completeOnboarding()
-                }).tag(4)
+                }.tag(4)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut, value: vm.currentStep)
         }
-        .background(Color.white)
+        .background(Color.appBackground)
     }
 }
 
@@ -153,6 +153,7 @@ struct OnboardingGoalScreen: View {
     private func goalCard(id: String, title: String, subtitle: String, icon: String) -> some View {
         let selected = vm.goal == id
         return Button {
+            Haptics.selection()
             vm.goal = id
         } label: {
             HStack(spacing: Spacing.md) {
@@ -295,6 +296,7 @@ struct OnboardingLifestyleScreen: View {
                         ("moderate",  "Moderately active", "Regular exercise 3-4x/week"),
                     ], id: \.0) { id, title, sub in
                         Button {
+                            Haptics.selection()
                             vm.activityLevel = id
                         } label: {
                             HStack {
