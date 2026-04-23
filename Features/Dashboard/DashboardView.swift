@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 // ── Main tab bar ──────────────────────────────────────────────────────────────
