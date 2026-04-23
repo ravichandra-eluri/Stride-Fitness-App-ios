@@ -25,7 +25,7 @@ enum APIError: LocalizedError {
 actor APIClient {
     static let shared = APIClient()
 
-    private let baseURL = "https://your-cloudrun-url.run.app" // set after deploy
+    private let baseURL = "https://stride-backend-zyytfut7bq-uc.a.run.app"
     private let session = URLSession.shared
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
