@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 // ── Meal Plan ViewModel ───────────────────────────────────────────────────────
 
@@ -110,8 +111,12 @@ struct MealPlanView: View {
             Group {
                 if vm.isLoading {
                     WLoadingView(message: "Loading your meal plan...")
+                } else if vm.isRegenerating {
+                    // Generating a plan takes 30–90s of Claude time. Show a
+                    // richer placeholder so the user knows what's happening.
+                    GeneratingMealPlanView()
                 } else if let error = vm.error {
-                    WErrorView(message: error) { Task { await vm.load() } }
+                    WErrorView(message: error) { Task { await vm.regenerate() } }
                 } else if vm.noProfile {
                     noProfileView
                 } else if vm.plan != nil {
@@ -400,5 +405,116 @@ struct MealSwapSheet: View {
 
     private func selectionKey(for meal: Meal) -> String {
         "\(meal.name)|\(meal.mealType)|\(meal.calories)"
+    }
+}
+
+// ── Generating placeholder ───────────────────────────────────────────────────
+// Shown while the backend is calling Claude to build a 7-day plan (~30–90s).
+// Animates through a checklist so the screen doesn't feel frozen.
+
+struct GeneratingMealPlanView: View {
+    @State private var progress: Int = 0
+
+    private let steps: [(String, String)] = [
+        ("fork.knife",          "Reading your profile"),
+        ("sparkles",            "Asking the AI coach for 7 days of meals"),
+        ("chart.bar.doc.horizontal", "Balancing calories and macros"),
+        ("checkmark.seal.fill", "Wrapping up your plan")
+    ]
+
+    private let timer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: Spacing.lg) {
+            VStack(spacing: Spacing.md) {
+                ZStack {
+                    Circle()
+                        .fill(Color.brandGreenBg)
+                        .frame(width: 88, height: 88)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundColor(.brandGreen)
+                        .symbolEffect(.pulse, options: .repeating)
+                }
+                Text("Building your week")
+                    .font(.titleSm)
+                Text("Stride is generating a 7-day plan around your calorie target and preferences. This usually takes 30–60 seconds.")
+                    .font(.bodyMd)
+                    .foregroundColor(.textMuted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Spacing.md)
+            }
+            .padding(.top, Spacing.xl)
+
+            WCard {
+                VStack(alignment: .leading, spacing: Spacing.md) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                        HStack(spacing: Spacing.md) {
+                            stepIcon(isDone: index < progress, isActive: index == progress, icon: step.0)
+                            Text(step.1)
+                                .font(.bodyMd)
+                                .foregroundColor(index <= progress ? .primary : .textMuted)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, Spacing.md)
+
+            // Skeleton meal cards — hints at what's about to appear.
+            VStack(spacing: Spacing.sm) {
+                ForEach(0..<3, id: \.self) { _ in skeletonMealCard }
+            }
+            .padding(.horizontal, Spacing.md)
+
+            Spacer(minLength: 0)
+        }
+        .onReceive(timer) { _ in
+            guard progress < steps.count - 1 else { return }
+            withAnimation(.easeInOut) { progress += 1 }
+        }
+    }
+
+    private func stepIcon(isDone: Bool, isActive: Bool, icon: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(isDone ? Color.brandGreen : Color.surface)
+                .frame(width: 28, height: 28)
+            if isDone {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+            } else if isActive {
+                ProgressView()
+                    .scaleEffect(0.7)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.textMuted)
+            }
+        }
+    }
+
+    private var skeletonMealCard: some View {
+        WCard {
+            HStack(spacing: Spacing.md) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.surface)
+                    .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.surface)
+                        .frame(height: 10)
+                        .frame(maxWidth: 160)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.surface)
+                        .frame(height: 8)
+                        .frame(maxWidth: 100)
+                }
+                Spacer()
+            }
+        }
+        .opacity(0.6)
     }
 }
