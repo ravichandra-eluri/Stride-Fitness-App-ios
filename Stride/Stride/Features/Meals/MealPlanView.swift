@@ -2,17 +2,19 @@ import SwiftUI
 
 // ── Meal Plan ViewModel ───────────────────────────────────────────────────────
 
+@Observable
 @MainActor
-class MealPlanViewModel: ObservableObject {
-    @Published var plan: WeeklyMealPlan?
-    @Published var selectedDay: String = ""
-    @Published var isLoading = true
-    @Published var isRegenerating = false
-    @Published var swapTargetMeal: Meal?
-    @Published var swapAlternatives: [Meal] = []
-    @Published var isSwapping = false
-    @Published var selectedFilter = "similar_calories"
-    @Published var error: String?
+
+class MealPlanViewModel {
+    var plan: WeeklyMealPlan?
+    var selectedDay: String = ""
+    var isLoading = true
+    var isRegenerating = false
+    var swapTargetMeal: Meal?
+    var swapAlternatives: [Meal] = []
+    var isSwapping = false
+    var selectedFilter = "similar_calories"
+    var error: String?
 
     var currentDayPlan: DayPlan? {
         plan?.days.first { $0.day == selectedDay }
@@ -76,7 +78,7 @@ class MealPlanViewModel: ObservableObject {
 // ── Meal Plan View ────────────────────────────────────────────────────────────
 
 struct MealPlanView: View {
-    @StateObject private var vm = MealPlanViewModel()
+    @State private var vm = MealPlanViewModel()
 
     var body: some View {
         NavigationStack {
@@ -100,7 +102,7 @@ struct MealPlanView: View {
             set: { if !$0 { vm.swapTargetMeal = nil; vm.swapAlternatives = [] } }
         )) {
             MealSwapSheet(vm: vm)
-                .presentationDetents([.medium, .large])
+                .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
         }
     }
 
@@ -198,7 +200,7 @@ struct MealPlanView: View {
 // ── Meal Swap Sheet ───────────────────────────────────────────────────────────
 
 struct MealSwapSheet: View {
-    @ObservedObject var vm: MealPlanViewModel
+    var vm: MealPlanViewModel
     @State private var selectedAlternative: Meal?
 
     let filters = [

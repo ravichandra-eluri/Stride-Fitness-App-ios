@@ -2,19 +2,21 @@ import SwiftUI
 
 // ── Log Food View ─────────────────────────────────────────────────────────────
 
+@Observable
 @MainActor
-class LogFoodViewModel: ObservableObject {
-    @Published var foodName: String = ""
-    @Published var calories: Int = 0
-    @Published var proteinG: Double = 0
-    @Published var carbsG: Double = 0
-    @Published var fatG: Double = 0
-    @Published var mealType: String = "lunch"
-    @Published var servingSize: String = "1 serving"
-    @Published var logMethod: String = "manual"
-    @Published var isLogging = false
-    @Published var successMessage: String?
-    @Published var error: String?
+
+class LogFoodViewModel {
+    var foodName: String = ""
+    var calories: Int = 0
+    var proteinG: Double = 0
+    var carbsG: Double = 0
+    var fatG: Double = 0
+    var mealType: String = "lunch"
+    var servingSize: String = "1 serving"
+    var logMethod: String = "manual"
+    var isLogging = false
+    var successMessage: String?
+    var error: String?
 
     var isValid: Bool { !foodName.isEmpty && calories > 0 }
 
@@ -45,7 +47,7 @@ class LogFoodViewModel: ObservableObject {
 }
 
 struct LogFoodView: View {
-    @StateObject private var vm = LogFoodViewModel()
+    @State private var vm = LogFoodViewModel()
 
     let mealTypes = ["breakfast", "lunch", "snack", "dinner"]
 
@@ -279,14 +281,16 @@ struct CoachView: View {
 
 // ── Progress View ─────────────────────────────────────────────────────────────
 
+@Observable
 @MainActor
-class ProgressViewModel: ObservableObject {
-    @Published var summary: WeeklySummary?
-    @Published var weightHistory: [WeightEntry] = []
-    @Published var showingWeightLogger = false
-    @Published var newWeight: Double = 80
-    @Published var isLoading = true
-    @Published var error: String?
+
+class ProgressViewModel {
+    var summary: WeeklySummary?
+    var weightHistory: [WeightEntry] = []
+    var showingWeightLogger = false
+    var newWeight: Double = 80
+    var isLoading = true
+    var error: String?
 
     func load() async {
         isLoading = true
@@ -312,7 +316,7 @@ class ProgressViewModel: ObservableObject {
 }
 
 struct ProgressView: View {
-    @StateObject private var vm = ProgressViewModel()
+    @State private var vm = ProgressViewModel()
 
     var body: some View {
         NavigationStack {

@@ -2,7 +2,7 @@ import SwiftUI
 import AuthenticationServices
 
 struct AuthView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     @State private var isLoading = false
     @State private var error: String?
 

@@ -2,29 +2,31 @@ import SwiftUI
 
 // ── Onboarding ViewModel ──────────────────────────────────────────────────────
 
+@Observable
 @MainActor
-class OnboardingViewModel: ObservableObject {
+
+class OnboardingViewModel {
     // Form state
-    @Published var goal: String = "lose_weight"
-    @Published var name: String = ""
-    @Published var age: Int = 30
-    @Published var gender: String = "male"
-    @Published var heightCm: Int = 175
-    @Published var currentWeight: Double = 80
-    @Published var goalWeight: Double = 70
-    @Published var timelineMonths: Int = 6
-    @Published var activityLevel: String = "light"
-    @Published var dailyMinutes: Int = 15
-    @Published var dietPrefs: Set<String> = []
+    var goal: String = "lose_weight"
+    var name: String = ""
+    var age: Int = 30
+    var gender: String = "male"
+    var heightCm: Int = 175
+    var currentWeight: Double = 80
+    var goalWeight: Double = 70
+    var timelineMonths: Int = 6
+    var activityLevel: String = "light"
+    var dailyMinutes: Int = 15
+    var dietPrefs: Set<String> = []
 
     // Navigation
-    @Published var currentStep: Int = 0
+    var currentStep: Int = 0
     let totalSteps = 5
 
     // AI result
-    @Published var plan: OnboardingPlanResponse?
-    @Published var isGenerating = false
-    @Published var error: String?
+    var plan: OnboardingPlanResponse?
+    var isGenerating = false
+    var error: String?
 
     func toggleDietPref(_ pref: String) {
         if pref == "none" {
@@ -71,8 +73,8 @@ class OnboardingViewModel: ObservableObject {
 // ── Onboarding flow container ─────────────────────────────────────────────────
 
 struct OnboardingFlowView: View {
-    @EnvironmentObject var appState: AppState
-    @StateObject private var vm = OnboardingViewModel()
+    @Environment(AppState.self) var appState
+    @State private var vm = OnboardingViewModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -113,7 +115,7 @@ struct OnboardingFlowView: View {
 // ── Screen 1: Goal ────────────────────────────────────────────────────────────
 
 struct OnboardingGoalScreen: View {
-    @ObservedObject var vm: OnboardingViewModel
+    @Bindable var vm: OnboardingViewModel
 
     let goals = [
         ("lose_weight",    "Lose weight",    "Reach my goal weight",      "scalemass"),
@@ -178,7 +180,7 @@ struct OnboardingGoalScreen: View {
 // ── Screen 2: Body stats ──────────────────────────────────────────────────────
 
 struct OnboardingBodyScreen: View {
-    @ObservedObject var vm: OnboardingViewModel
+    @Bindable var vm: OnboardingViewModel
 
     var body: some View {
         ScrollView {
@@ -263,7 +265,7 @@ struct OnboardingBodyScreen: View {
 // ── Screen 3: Lifestyle ───────────────────────────────────────────────────────
 
 struct OnboardingLifestyleScreen: View {
-    @ObservedObject var vm: OnboardingViewModel
+    @Bindable var vm: OnboardingViewModel
 
     var body: some View {
         ScrollView {
@@ -359,7 +361,7 @@ struct OnboardingLifestyleScreen: View {
 // ── Screen 4: Generating ──────────────────────────────────────────────────────
 
 struct OnboardingGeneratingScreen: View {
-    @ObservedObject var vm: OnboardingViewModel
+    @Bindable var vm: OnboardingViewModel
 
     let steps = [
         "Calculating your calorie target",
@@ -416,7 +418,7 @@ struct OnboardingGeneratingScreen: View {
 // ── Screen 5: Result ──────────────────────────────────────────────────────────
 
 struct OnboardingResultScreen: View {
-    @ObservedObject var vm: OnboardingViewModel
+    @Bindable var vm: OnboardingViewModel
     let onComplete: () -> Void
 
     var body: some View {

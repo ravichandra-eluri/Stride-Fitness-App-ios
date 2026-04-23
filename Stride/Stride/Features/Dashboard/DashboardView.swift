@@ -33,13 +33,15 @@ struct MainTabView: View {
 
 // ── Dashboard ViewModel ───────────────────────────────────────────────────────
 
+@Observable
 @MainActor
-class DashboardViewModel: ObservableObject {
-    @Published var todayLog: TodayLogResponse?
-    @Published var coachMessage: CoachMessage?
-    @Published var profile: UserProfile?
-    @Published var isLoading = true
-    @Published var error: String?
+
+class DashboardViewModel {
+    var todayLog: TodayLogResponse?
+    var coachMessage: CoachMessage?
+    var profile: UserProfile?
+    var isLoading = true
+    var error: String?
 
     func load() async {
         isLoading = true
@@ -71,7 +73,7 @@ class DashboardViewModel: ObservableObject {
 // ── Dashboard View ────────────────────────────────────────────────────────────
 
 struct DashboardView: View {
-    @StateObject private var vm = DashboardViewModel()
+    @State private var vm = DashboardViewModel()
 
     var body: some View {
         NavigationStack {
@@ -205,7 +207,7 @@ struct DashboardView: View {
 // ── Profile View (settings) ───────────────────────────────────────────────────
 
 struct ProfileView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
 
     var body: some View {
         List {
