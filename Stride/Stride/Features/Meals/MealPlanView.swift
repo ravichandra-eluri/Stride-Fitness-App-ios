@@ -34,8 +34,19 @@ class MealPlanViewModel {
             if case .serverError(404, let msg) = apiError {
                 if msg.contains("profile not found") {
                     noProfile = true
+                    isLoading = false
                 } else {
-                    plan = nil  // no plan yet — new user with profile
+                    // No plan yet — auto-generate instead of showing empty state
+                    isLoading = false
+                    isRegenerating = true
+                    do {
+                        plan = try await APIClient.shared.regenerateMealPlan()
+                        selectedDay = plan?.days.first?.day ?? ""
+                    } catch {
+                        self.error = error.localizedDescription
+                    }
+                    isRegenerating = false
+                    return
                 }
             } else {
                 self.error = apiError.localizedDescription

@@ -49,17 +49,16 @@ class DashboardViewModel {
     func load() async {
         isLoading = true
 
-        // Load each independently — one failure shouldn't break the whole screen
-        do { todayLog = try await APIClient.shared.getTodayLog() }
-        catch { print("[Dashboard] todayLog: \(error)") }
+        // Load log and profile in parallel (fast DB queries)
+        async let logTask     = try? APIClient.shared.getTodayLog()
+        async let profileTask = try? APIClient.shared.getProfile()
+        todayLog = await logTask
+        profile  = await profileTask
+        isLoading = false
 
+        // Coach message generates on-demand via Claude — load after UI is visible
         do { coachMessage = try await APIClient.shared.getTodayCoachMessage() }
         catch { print("[Dashboard] coachMessage: \(error)") }
-
-        do { profile = try await APIClient.shared.getProfile() }
-        catch { print("[Dashboard] profile: \(error)") }
-
-        isLoading = false
     }
 
     var caloriesEaten: Int { todayLog?.log?.caloriesEaten ?? 0 }
@@ -435,6 +434,8 @@ struct ProfileView: View {
     @State private var showDeleteConfirm = false
     @State private var isDeletingAccount = false
     @State private var deleteError: String?
+    @State private var showEditProfile    = false
+    @State private var showNotifications  = false
 
     var body: some View {
         List {
@@ -461,9 +462,22 @@ struct ProfileView: View {
             }
 
             Section("Account") {
-                Label("Settings", systemImage: "gearshape")
-                Label("Notifications", systemImage: "bell")
-                Label("Privacy", systemImage: "hand.raised.fill")
+                Button { showEditProfile = true } label: {
+                    Label("Edit Profile", systemImage: "gearshape")
+                        .foregroundColor(.primary)
+                }
+                Button { showNotifications = true } label: {
+                    Label("Notifications", systemImage: "bell")
+                        .foregroundColor(.primary)
+                }
+                Button {
+                    if let url = URL(string: "https://stride-backend-zyytfut7bq-uc.a.run.app/privacy") {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Label("Privacy Policy", systemImage: "hand.raised.fill")
+                        .foregroundColor(.primary)
+                }
             }
 
             Section {
@@ -504,6 +518,13 @@ struct ProfileView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
             }
+        }
+        .sheet(isPresented: $showEditProfile) {
+            EditProfileView()
+                .onDisappear { Task { profile = try? await APIClient.shared.getProfile() } }
+        }
+        .sheet(isPresented: $showNotifications) {
+            NotificationsSettingsView()
         }
         .confirmationDialog(
             "Delete account?",
