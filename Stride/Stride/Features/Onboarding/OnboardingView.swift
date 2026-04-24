@@ -252,6 +252,9 @@ struct OnboardingGoalScreen: View {
 
 struct OnboardingBodyScreen: View {
     @Bindable var vm: OnboardingViewModel
+    @State private var heightText = ""
+    @State private var currentWeightText = ""
+    @State private var goalWeightText = ""
 
     var body: some View {
         ScrollView {
@@ -295,17 +298,27 @@ struct OnboardingBodyScreen: View {
 
                         HStack(spacing: Spacing.md) {
                             formField("Height (cm)") {
-                                Stepper("\(vm.heightCm) cm", value: $vm.heightCm, in: 100...220)
+                                TextField("175", text: $heightText)
+                                    .keyboardType(.numberPad)
+                                    .onChange(of: heightText) { _, new in
+                                        if let v = Int(new), (100...220).contains(v) { vm.heightCm = v }
+                                    }
                             }
                             formField("Weight (kg)") {
-                                Stepper(String(format: "%.1f", vm.currentWeight),
-                                        value: $vm.currentWeight, in: 30...300, step: 0.5)
+                                TextField("80.0", text: $currentWeightText)
+                                    .keyboardType(.decimalPad)
+                                    .onChange(of: currentWeightText) { _, new in
+                                        if let v = Double(new), (30...300).contains(v) { vm.currentWeight = v }
+                                    }
                             }
                         }
 
                         formField("Goal weight (kg)") {
-                            Stepper(String(format: "%.1f kg", vm.goalWeight),
-                                    value: $vm.goalWeight, in: 30...300, step: 0.5)
+                            TextField("70.0", text: $goalWeightText)
+                                .keyboardType(.decimalPad)
+                                .onChange(of: goalWeightText) { _, new in
+                                    if let v = Double(new), (30...300).contains(v) { vm.goalWeight = v }
+                                }
                         }
 
                         formField("Timeline") {
@@ -327,6 +340,11 @@ struct OnboardingBodyScreen: View {
             .padding(Spacing.lg)
         }
         .scrollDismissesKeyboard(.interactively)
+        .onAppear {
+            if heightText.isEmpty { heightText = "\(vm.heightCm)" }
+            if currentWeightText.isEmpty { currentWeightText = String(format: "%.1f", vm.currentWeight) }
+            if goalWeightText.isEmpty { goalWeightText = String(format: "%.1f", vm.goalWeight) }
+        }
     }
 
     private func formField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -448,6 +466,7 @@ struct OnboardingLifestyleScreen: View {
 
 struct OnboardingGeneratingScreen: View {
     @Bindable var vm: OnboardingViewModel
+    @State private var completedSteps = 0
 
     let steps = [
         "Calculating your calorie target",
@@ -467,11 +486,14 @@ struct OnboardingGeneratingScreen: View {
             WHeroCard {
                 VStack(alignment: .leading, spacing: Spacing.md) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+                        let isDone    = vm.plan != nil || i < completedSteps
+                        let isCurrent = vm.plan == nil && i == completedSteps
                         HStack(spacing: Spacing.md) {
-                            if vm.plan != nil || i < 2 {
+                            if isDone {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundColor(.success)
-                            } else if i == 2 {
+                                    .transition(.scale.combined(with: .opacity))
+                            } else if isCurrent {
                                 ProgressView()
                                     .scaleEffect(0.7)
                                     .frame(width: 20, height: 20)
@@ -482,7 +504,8 @@ struct OnboardingGeneratingScreen: View {
                             }
                             Text(step)
                                 .font(.bodyMd)
-                                .foregroundColor(i <= 2 ? .primary : .textMuted)
+                                .foregroundColor(isDone || isCurrent ? .primary : .textMuted)
+                                .animation(.easeInOut, value: isDone)
                         }
                     }
                 }
@@ -494,11 +517,21 @@ struct OnboardingGeneratingScreen: View {
                               valueColor: .brandGreen)
                     WStatCard(value: plan.goalDate, label: "goal reached")
                 }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             Spacer()
         }
         .padding(Spacing.lg)
+        .task {
+            // Advance one step every 5s, leaving the last step to spin until
+            // the API responds. If the plan arrives first, everything jumps to done.
+            for i in 0..<(steps.count - 1) {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard vm.plan == nil else { break }
+                withAnimation(.easeInOut(duration: 0.4)) { completedSteps = i + 1 }
+            }
+        }
     }
 }
 
