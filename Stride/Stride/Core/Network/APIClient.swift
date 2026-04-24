@@ -240,6 +240,10 @@ extension APIClient {
         try await delete("/api/log/food/\(id)")
     }
 
+    func deleteAccount() async throws {
+        try await delete("/api/account")
+    }
+
     func logWeight(_ kg: Double, note: String = "") async throws {
         struct Body: Encodable { let weightKg: Double; let note: String }
         struct Empty: Decodable {}

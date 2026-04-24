@@ -432,6 +432,9 @@ struct ProfileView: View {
     @Environment(AppState.self) var appState
     @Environment(\.dismiss) private var dismiss
     @State private var profile: UserProfile?
+    @State private var showDeleteConfirm = false
+    @State private var isDeletingAccount = false
+    @State private var deleteError: String?
 
     var body: some View {
         List {
@@ -470,6 +473,29 @@ struct ProfileView: View {
                 } label: {
                     Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
+
+                Button(role: .destructive) {
+                    Haptics.notify(.warning)
+                    showDeleteConfirm = true
+                } label: {
+                    if isDeletingAccount {
+                        HStack(spacing: Spacing.sm) {
+                            ProgressView().tint(.danger)
+                            Text("Deleting account…")
+                        }
+                    } else {
+                        Label("Delete account", systemImage: "trash")
+                    }
+                }
+                .disabled(isDeletingAccount)
+            }
+
+            if let err = deleteError {
+                Section {
+                    Text(err)
+                        .font(.bodySm)
+                        .foregroundColor(.danger)
+                }
             }
         }
         .navigationTitle("Profile")
@@ -479,8 +505,34 @@ struct ProfileView: View {
                 Button("Done") { dismiss() }
             }
         }
+        .confirmationDialog(
+            "Delete account?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete my account", role: .destructive) {
+                Task { await performDeleteAccount() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes all your data — logs, meal plans, and progress. This cannot be undone.")
+        }
         .task {
             profile = try? await APIClient.shared.getProfile()
         }
+    }
+
+    private func performDeleteAccount() async {
+        isDeletingAccount = true
+        deleteError = nil
+        do {
+            try await APIClient.shared.deleteAccount()
+            Haptics.notify(.success)
+            appState.signOut()
+        } catch {
+            deleteError = error.localizedDescription
+            Haptics.notify(.error)
+        }
+        isDeletingAccount = false
     }
 }
