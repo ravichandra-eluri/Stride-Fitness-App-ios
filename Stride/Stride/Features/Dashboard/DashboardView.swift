@@ -44,6 +44,7 @@ class DashboardViewModel {
     var todayLog: TodayLogResponse?
     var coachMessage: CoachMessage?
     var profile: UserProfile?
+    var weightHistory: [WeightEntry] = []
     var isLoading = true
 
     func load() async {
@@ -56,9 +57,12 @@ class DashboardViewModel {
         profile  = await profileTask
         isLoading = false
 
-        // Coach message generates on-demand via Claude — load after UI is visible
-        do { coachMessage = try await APIClient.shared.getTodayCoachMessage() }
-        catch { print("[Dashboard] coachMessage: \(error)") }
+        // Secondary loads — run after UI is visible, order doesn't matter
+        async let coachTask   = try? APIClient.shared.getTodayCoachMessage()
+        async let weightsTask = try? APIClient.shared.getWeightHistory()
+        coachMessage   = await coachTask
+        let raw = await weightsTask ?? []
+        weightHistory  = raw.sorted { $0.loggedAtDate < $1.loggedAtDate }
     }
 
     var caloriesEaten: Int { todayLog?.log?.caloriesEaten ?? 0 }
@@ -68,6 +72,20 @@ class DashboardViewModel {
     var carbs: Double      { todayLog?.log?.carbsG ?? 0 }
     var fat: Double        { todayLog?.log?.fatG ?? 0 }
     var streakDays: Int    { todayLog?.log?.streakDay ?? 0 }
+
+    // Goal progress — uses weight log history if available, falls back to profile
+    var startWeight: Double  { weightHistory.first?.weightKg ?? profile?.currentWeightKg ?? 0 }
+    var currentWeight: Double { weightHistory.last?.weightKg  ?? profile?.currentWeightKg ?? 0 }
+    var goalWeight: Double   { profile?.goalWeightKg ?? 0 }
+
+    var goalProgressFraction: Double {
+        let total = abs(startWeight - goalWeight)
+        guard total > 0 else { return 0 }
+        let done = abs(startWeight - currentWeight)
+        return min(max(done / total, 0), 1)
+    }
+
+    var kgRemaining: Double { max(currentWeight - goalWeight, 0) }
 
     /// Optimistically remove the entry locally, then tell the server. On
     /// failure we reload from source of truth so state stays consistent.
@@ -225,6 +243,11 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Goal progress card
+                if vm.goalWeight > 0 && vm.startWeight > vm.goalWeight {
+                    goalProgressCard
+                }
+
                 // Coach message
                 if let msg = vm.coachMessage {
                     WCoachBubble(message: msg.message)
@@ -243,32 +266,17 @@ struct DashboardView: View {
                     .clipShape(Capsule())
                 }
 
-                // Today's food entries
+                // Today’s food log — grouped by meal type
                 VStack(alignment: .leading, spacing: Spacing.sm) {
                     WSectionHeader(
                         eyebrow: "Today",
                         title: "Food log",
-                        subtitle: "Long-press any entry to remove it from today’s totals."
+                        subtitle: "Long-press any entry to remove it."
                     )
 
                     if let entries = vm.todayLog?.entries, !entries.isEmpty {
-                        WCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
-                                    foodEntryRow(entry)
-                                        .contextMenu {
-                                            Button(role: .destructive) {
-                                                Task { await vm.deleteEntry(entry) }
-                                            } label: {
-                                                Label("Delete entry", systemImage: "trash")
-                                            }
-                                        }
-
-                                    if i < entries.count - 1 {
-                                        Divider().padding(.leading, Spacing.md)
-                                    }
-                                }
-                            }
+                        ForEach(groupedEntries(entries), id: \.0) { mealType, mealEntries in
+                            mealGroupCard(mealType: mealType, entries: mealEntries)
                         }
                     } else {
                         Text("No food logged yet today")
@@ -309,6 +317,100 @@ struct DashboardView: View {
         .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.sm)
         .contentShape(Rectangle())
+    }
+
+    // ── Goal progress card ───────────────────────────────────────────────
+    private var goalProgressCard: some View {
+        WCard {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                HStack {
+                    Label("Weight goal", systemImage: "scalemass")
+                        .font(.labelSm).foregroundColor(.textMuted)
+                    Spacer()
+                    Text(String(format: "%.1f kg to go", vm.kgRemaining))
+                        .font(.labelSm).foregroundColor(.brandGreen)
+                }
+                HStack(spacing: Spacing.lg) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Now").font(.bodySm).foregroundColor(.textMuted)
+                        Text(String(format: "%.1f kg", vm.currentWeight)).font(.labelMd)
+                    }
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12)).foregroundColor(.textMuted)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Goal").font(.bodySm).foregroundColor(.textMuted)
+                        Text(String(format: "%.1f kg", vm.goalWeight))
+                            .font(.labelMd).foregroundColor(.brandGreen)
+                    }
+                    Spacer()
+                    Text(String(format: "%.0f%%", vm.goalProgressFraction * 100))
+                        .font(.numericMd).foregroundColor(.brandGreen)
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.border).frame(height: 6)
+                        Capsule().fill(
+                            LinearGradient(colors: [.brandGreen, .brandPurple],
+                                           startPoint: .leading, endPoint: .trailing)
+                        )
+                        .frame(width: geo.size.width * vm.goalProgressFraction, height: 6)
+                        .animation(.easeOut(duration: 0.6), value: vm.goalProgressFraction)
+                    }
+                }
+                .frame(height: 6)
+            }
+        }
+    }
+
+    // ── Grouped food log ─────────────────────────────────────────────────
+    private let mealOrder = ["breakfast", "lunch", "snack", "dinner"]
+
+    private func groupedEntries(_ entries: [FoodEntry]) -> [(String, [FoodEntry])] {
+        let grouped = Dictionary(grouping: entries) { $0.mealType.lowercased() }
+        var result = mealOrder.compactMap { type -> (String, [FoodEntry])? in
+            guard let g = grouped[type], !g.isEmpty else { return nil }
+            return (type, g)
+        }
+        // append any meal types not in the standard order
+        let known = Set(mealOrder)
+        for (type, g) in grouped where !known.contains(type) { result.append((type, g)) }
+        return result
+    }
+
+    private func mealGroupCard(mealType: String, entries: [FoodEntry]) -> some View {
+        let subtotal = entries.reduce(0) { $0 + $1.calories }
+        return WCard(padding: 0) {
+            VStack(spacing: 0) {
+                // Group header
+                HStack {
+                    Label(mealType.capitalized, systemImage: mealIcon(mealType))
+                        .font(.labelSm)
+                        .foregroundColor(mealColor(mealType))
+                    Spacer()
+                    Text("\(subtotal) cal")
+                        .font(.labelSm).foregroundColor(.textMuted)
+                }
+                .padding(.horizontal, Spacing.md)
+                .padding(.top, Spacing.sm)
+                .padding(.bottom, Spacing.xs)
+
+                Divider()
+
+                ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
+                    foodEntryRow(entry)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                Task { await vm.deleteEntry(entry) }
+                            } label: {
+                                Label("Delete entry", systemImage: "trash")
+                            }
+                        }
+                    if i < entries.count - 1 {
+                        Divider().padding(.leading, Spacing.md)
+                    }
+                }
+            }
+        }
     }
 
     private func mealIcon(_ type: String) -> String {

@@ -116,6 +116,7 @@ class MealPlanViewModel {
 struct MealPlanView: View {
     @State private var vm = MealPlanViewModel()
     @State private var showOnboarding = false
+    @State private var mealToLog: Meal?
 
     var body: some View {
         NavigationStack {
@@ -143,6 +144,9 @@ struct MealPlanView: View {
         .sheet(isPresented: $showOnboarding) {
             OnboardingFlowView(onComplete: { showOnboarding = false })
                 .onDisappear { Task { await vm.load() } }
+        }
+        .sheet(item: $mealToLog) { meal in
+            LogMealSheet(meal: meal)
         }
         .sheet(isPresented: .init(
             get: { vm.swapTargetMeal != nil },
@@ -264,18 +268,34 @@ struct MealPlanView: View {
                             .font(.labelMd)
                     }
                     Spacer()
-                    Button {
-                        Task { await vm.loadSwapAlternatives(for: meal) }
-                    } label: {
-                        Text("Swap")
-                            .font(.labelSm)
-                            .foregroundColor(.infoText)
-                            .padding(.horizontal, Spacing.sm)
-                            .padding(.vertical, 4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.infoText.opacity(0.4), lineWidth: 0.5)
-                            )
+                    HStack(spacing: Spacing.sm) {
+                        Button {
+                            mealToLog = meal
+                            Haptics.impact(.light)
+                        } label: {
+                            Text("Log")
+                                .font(.labelSm)
+                                .foregroundColor(.brandGreen)
+                                .padding(.horizontal, Spacing.sm)
+                                .padding(.vertical, 4)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.brandGreen.opacity(0.5), lineWidth: 0.5)
+                                )
+                        }
+                        Button {
+                            Task { await vm.loadSwapAlternatives(for: meal) }
+                        } label: {
+                            Text("Swap")
+                                .font(.labelSm)
+                                .foregroundColor(.infoText)
+                                .padding(.horizontal, Spacing.sm)
+                                .padding(.vertical, 4)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.infoText.opacity(0.4), lineWidth: 0.5)
+                                )
+                        }
                     }
                 }
                 HStack(spacing: Spacing.lg) {
@@ -309,6 +329,120 @@ struct MealPlanView: View {
         case "snack": return .brandPurple
         case "dinner": return .infoText
         default: return .textMuted
+        }
+    }
+}
+
+// ── Log meal sheet ─────────────────────────────────────────────────────────────
+
+struct LogMealSheet: View {
+    let meal: Meal
+    @State private var vm = LogFoodViewModel()
+    @State private var logged = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: Spacing.lg) {
+
+                    // Meal summary
+                    WHeroCard {
+                        VStack(alignment: .leading, spacing: Spacing.sm) {
+                            Label(meal.mealType.capitalized, systemImage: mealIcon(meal.mealType))
+                                .font(.labelSm)
+                                .foregroundColor(mealTint(meal.mealType))
+                            Text(meal.name).font(.titleSm)
+                            HStack(spacing: Spacing.md) {
+                                macroChip("\(meal.calories)", "cal", .brandGreen)
+                                macroChip("P \(Int(meal.proteinG))g", "protein", .brandPurple)
+                                macroChip("C \(Int(meal.carbsG))g", "carbs", .warning)
+                                macroChip("F \(Int(meal.fatG))g", "fat", .textMuted)
+                            }
+                        }
+                    }
+
+                    // Meal type picker in case they want to change it
+                    WCard {
+                        VStack(alignment: .leading, spacing: Spacing.xs) {
+                            Text("Log as").font(.labelSm).foregroundColor(.textMuted)
+                            Picker("", selection: $vm.mealType) {
+                                ForEach(["breakfast", "lunch", "snack", "dinner"], id: \.self) {
+                                    Text($0.capitalized).tag($0)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                    }
+
+                    if let err = vm.error {
+                        Text(err).font(.bodySm).foregroundColor(.danger)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    WButton(title: logged ? "Logged!" : "Log this meal", isLoading: vm.isLogging) {
+                        Task {
+                            let ok = await vm.logFood()
+                            if ok {
+                                Haptics.notify(.success)
+                                logged = true
+                                try? await Task.sleep(nanoseconds: 700_000_000)
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(logged)
+                }
+                .padding(Spacing.md)
+            }
+            .navigationTitle("Log meal")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .onAppear {
+            vm.applyNutrition(FoodNutrition(
+                name: meal.name,
+                calories: meal.calories,
+                proteinG: meal.proteinG,
+                carbsG: meal.carbsG,
+                fatG: meal.fatG,
+                servingSize: "1 serving"
+            ))
+            vm.mealType = meal.mealType.lowercased()
+        }
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func macroChip(_ value: String, _ label: String, _ color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(.labelSm).foregroundColor(color)
+            Text(label).font(.bodySm).foregroundColor(.textMuted)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func mealIcon(_ type: String) -> String {
+        switch type.lowercased() {
+        case "breakfast": return "sunrise.fill"
+        case "lunch":     return "sun.max.fill"
+        case "snack":     return "leaf.fill"
+        case "dinner":    return "moon.stars.fill"
+        default:          return "fork.knife"
+        }
+    }
+
+    private func mealTint(_ type: String) -> Color {
+        switch type.lowercased() {
+        case "breakfast": return .warning
+        case "lunch":     return .brandGreen
+        case "snack":     return .brandPurple
+        case "dinner":    return .infoText
+        default:          return .textMuted
         }
     }
 }
