@@ -1,5 +1,7 @@
 import SwiftUI
 import Charts
+import HealthKit
+import AVFoundation
 
 // ── Log Food View ─────────────────────────────────────────────────────────────
 
@@ -20,7 +22,19 @@ class LogFoodViewModel {
     var successMessage: String?
     var error: String?
 
+    var isLookingUp = false
+
     var isValid: Bool { !foodName.isEmpty && (calories ?? 0) > 0 }
+
+    func applyNutrition(_ n: FoodNutrition) {
+        foodName   = n.name
+        calories   = n.calories
+        proteinG   = n.proteinG
+        carbsG     = n.carbsG
+        fatG       = n.fatG
+        servingSize = n.servingSize.isEmpty ? "1 serving" : n.servingSize
+        logMethod  = "manual"
+    }
 
     func logFood() async -> Bool {
         guard isValid else { return false }
@@ -57,12 +71,9 @@ class LogFoodViewModel {
 
 struct LogFoodView: View {
     @State private var vm = LogFoodViewModel()
-    @State private var showComingSoon = false
-    @State private var comingSoonTitle = ""
+    @State private var showCamera = false
     @FocusState private var focusedField: Field?
 
-    /// Called after a successful log. Parent (MainTabView) switches to Home
-    /// so the user immediately sees the updated totals.
     var onLogged: (() -> Void)? = nil
 
     let mealTypes = ["breakfast", "lunch", "snack", "dinner"]
@@ -74,63 +85,19 @@ struct LogFoodView: View {
             ScrollView {
                 VStack(spacing: Spacing.lg) {
 
-                    // Log method
+                    // Log method selector
                     HStack(spacing: Spacing.sm) {
                         logMethodButton(icon: "barcode.viewfinder", label: "Scan",   method: "barcode")
                         logMethodButton(icon: "camera.fill",         label: "Photo",  method: "photo")
                         logMethodButton(icon: "list.bullet",         label: "Manual", method: "manual")
                     }
 
-                    // Manual entry form
                     if vm.logMethod == "manual" {
-                        WCard {
-                            VStack(alignment: .leading, spacing: Spacing.md) {
-                                formField("Food name") {
-                                    TextField("e.g. Chicken rice bowl", text: $vm.foodName)
-                                        .focused($focusedField, equals: .foodName)
-                                }
-                                formField("Meal type") {
-                                    Picker("", selection: $vm.mealType) {
-                                        ForEach(mealTypes, id: \.self) {
-                                            Text($0.capitalized).tag($0)
-                                        }
-                                    }
-                                    .pickerStyle(.segmented)
-                                }
-                                HStack(spacing: Spacing.md) {
-                                    formField("Calories") {
-                                        TextField("e.g. 450", value: $vm.calories, format: .number)
-                                            .keyboardType(.numberPad)
-                                            .focused($focusedField, equals: .calories)
-                                    }
-                                    formField("Serving") {
-                                        TextField("1 serving", text: $vm.servingSize)
-                                            .focused($focusedField, equals: .serving)
-                                    }
-                                }
-                                HStack(spacing: Spacing.md) {
-                                    formField("Protein (g)") {
-                                        TextField("0", value: $vm.proteinG, format: .number)
-                                            .keyboardType(.decimalPad)
-                                            .focused($focusedField, equals: .protein)
-                                    }
-                                    formField("Carbs (g)") {
-                                        TextField("0", value: $vm.carbsG, format: .number)
-                                            .keyboardType(.decimalPad)
-                                            .focused($focusedField, equals: .carbs)
-                                    }
-                                    formField("Fat (g)") {
-                                        TextField("0", value: $vm.fatG, format: .number)
-                                            .keyboardType(.decimalPad)
-                                            .focused($focusedField, equals: .fat)
-                                    }
-                                }
-                            }
-                        }
+                        manualForm
                     } else if vm.logMethod == "barcode" {
-                        barcodePlaceholder
+                        BarcodeScannerCard(vm: vm)
                     } else {
-                        photoPlaceholder
+                        PhotoAnalysisCard(vm: vm, showCamera: $showCamera)
                     }
 
                     if let msg = vm.successMessage {
@@ -166,10 +133,69 @@ struct LogFoodView: View {
                 }
             }
         }
-        .alert(comingSoonTitle, isPresented: $showComingSoon) {
-            Button("OK", role: .cancel) { vm.logMethod = "manual" }
-        } message: {
-            Text("This feature is coming soon. Use manual entry for now.")
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPickerView { image in
+                showCamera = false
+                Task {
+                    vm.isLookingUp = true
+                    vm.error = nil
+                    guard let jpeg = image.jpegData(compressionQuality: 0.7) else { return }
+                    let b64 = jpeg.base64EncodedString()
+                    do {
+                        let nutrition = try await APIClient.shared.analyzePhoto(imageBase64: b64)
+                        vm.applyNutrition(nutrition)
+                    } catch {
+                        vm.error = "Couldn't analyse photo. Fill in manually."
+                        vm.logMethod = "manual"
+                    }
+                    vm.isLookingUp = false
+                }
+            } onCancel: {
+                showCamera = false
+                vm.logMethod = "manual"
+            }
+        }
+    }
+
+    private var manualForm: some View {
+        WCard {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                formField("Food name") {
+                    TextField("e.g. Chicken rice bowl", text: $vm.foodName)
+                        .focused($focusedField, equals: .foodName)
+                }
+                formField("Meal type") {
+                    Picker("", selection: $vm.mealType) {
+                        ForEach(mealTypes, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                HStack(spacing: Spacing.md) {
+                    formField("Calories") {
+                        TextField("e.g. 450", value: $vm.calories, format: .number)
+                            .keyboardType(.numberPad)
+                            .focused($focusedField, equals: .calories)
+                    }
+                    formField("Serving") {
+                        TextField("1 serving", text: $vm.servingSize)
+                            .focused($focusedField, equals: .serving)
+                    }
+                }
+                HStack(spacing: Spacing.md) {
+                    formField("Protein (g)") {
+                        TextField("0", value: $vm.proteinG, format: .number)
+                            .keyboardType(.decimalPad).focused($focusedField, equals: .protein)
+                    }
+                    formField("Carbs (g)") {
+                        TextField("0", value: $vm.carbsG, format: .number)
+                            .keyboardType(.decimalPad).focused($focusedField, equals: .carbs)
+                    }
+                    formField("Fat (g)") {
+                        TextField("0", value: $vm.fatG, format: .number)
+                            .keyboardType(.decimalPad).focused($focusedField, equals: .fat)
+                    }
+                }
+            }
         }
     }
 
@@ -177,8 +203,7 @@ struct LogFoodView: View {
         let selected = vm.logMethod == method
         return Button { vm.logMethod = method } label: {
             VStack(spacing: Spacing.xs) {
-                Image(systemName: icon)
-                    .font(.system(size: 20))
+                Image(systemName: icon).font(.system(size: 20))
                     .foregroundColor(selected ? .brandGreen : .textMuted)
                 Text(label).font(.labelSm)
                     .foregroundColor(selected ? .brandGreen : .textMuted)
@@ -186,53 +211,11 @@ struct LogFoodView: View {
             .frame(maxWidth: .infinity)
             .padding(Spacing.md)
             .background(selected ? Color.brandGreenBg : Color.surface)
-            .overlay(
-                RoundedRectangle(cornerRadius: Radius.sm)
-                    .stroke(selected ? Color.brandGreen : Color.border, lineWidth: selected ? 1.5 : 0.5)
-            )
+            .overlay(RoundedRectangle(cornerRadius: Radius.sm)
+                .stroke(selected ? Color.brandGreen : Color.border, lineWidth: selected ? 1.5 : 0.5))
             .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
         }
         .buttonStyle(.plain)
-    }
-
-    private var barcodePlaceholder: some View {
-        WCard {
-            VStack(spacing: Spacing.md) {
-                Image(systemName: "barcode.viewfinder")
-                    .font(.system(size: 48))
-                    .foregroundColor(.textMuted)
-                Text("Tap to open camera and scan a barcode")
-                    .font(.bodyMd)
-                    .foregroundColor(.textMuted)
-                    .multilineTextAlignment(.center)
-                WButton(title: "Open scanner") {
-                    comingSoonTitle = "Barcode Scanner"
-                    showComingSoon = true
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(Spacing.xl)
-        }
-    }
-
-    private var photoPlaceholder: some View {
-        WCard {
-            VStack(spacing: Spacing.md) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.textMuted)
-                Text("Take a photo and AI will estimate the calories")
-                    .font(.bodyMd)
-                    .foregroundColor(.textMuted)
-                    .multilineTextAlignment(.center)
-                WButton(title: "Open camera") {
-                    comingSoonTitle = "Photo Food Recognition"
-                    showComingSoon = true
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(Spacing.xl)
-        }
     }
 
     private func formField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -242,6 +225,194 @@ struct LogFoodView: View {
                 .padding(Spacing.sm)
                 .background(Color.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+}
+
+// ── Barcode scanner card ──────────────────────────────────────────────────────
+
+struct BarcodeScannerCard: View {
+    @Bindable var vm: LogFoodViewModel
+    @State private var scannedCode: String?
+    @State private var hasScanned = false
+
+    var body: some View {
+        WCard(padding: 0) {
+            VStack(spacing: 0) {
+                if vm.isLookingUp {
+                    VStack(spacing: Spacing.md) {
+                        ProgressView()
+                        Text("Looking up product…").font(.bodyMd).foregroundColor(.textMuted)
+                    }
+                    .frame(height: 240)
+                } else {
+                    BarcodeScannerView { code in
+                        guard !hasScanned else { return }
+                        hasScanned = true
+                        Haptics.notify(.success)
+                        Task {
+                            vm.isLookingUp = true
+                            vm.error = nil
+                            do {
+                                let nutrition = try await APIClient.shared.lookupBarcode(code)
+                                vm.applyNutrition(nutrition)
+                            } catch {
+                                vm.error = "Product not found. Fill in manually."
+                                vm.logMethod = "manual"
+                            }
+                            vm.isLookingUp = false
+                        }
+                    }
+                    .frame(height: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+
+                    HStack {
+                        Image(systemName: "viewfinder")
+                            .foregroundColor(.textMuted)
+                        Text("Point camera at a barcode")
+                            .font(.bodySm).foregroundColor(.textMuted)
+                    }
+                    .padding(Spacing.md)
+                }
+            }
+        }
+    }
+}
+
+// ── Photo analysis card ───────────────────────────────────────────────────────
+
+struct PhotoAnalysisCard: View {
+    @Bindable var vm: LogFoodViewModel
+    @Binding var showCamera: Bool
+
+    var body: some View {
+        WCard {
+            VStack(spacing: Spacing.md) {
+                if vm.isLookingUp {
+                    ProgressView()
+                    Text("AI is estimating calories…").font(.bodyMd).foregroundColor(.textMuted)
+                } else {
+                    Image(systemName: "camera.fill").font(.system(size: 48)).foregroundColor(.textMuted)
+                    Text("Take a photo and AI will estimate the calories")
+                        .font(.bodyMd).foregroundColor(.textMuted).multilineTextAlignment(.center)
+                    WButton(title: "Open camera") { showCamera = true }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(Spacing.xl)
+        }
+    }
+}
+
+// ── AVFoundation barcode scanner ──────────────────────────────────────────────
+
+struct BarcodeScannerView: UIViewRepresentable {
+    let onFound: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onFound: onFound) }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .black
+
+        guard AVCaptureDevice.authorizationStatus(for: .video) != .denied,
+              let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device)
+        else {
+            let label = UILabel()
+            label.text = "Camera access required"
+            label.textColor = .white
+            label.textAlignment = .center
+            label.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            ])
+            return view
+        }
+
+        let session = AVCaptureSession()
+        context.coordinator.session = session
+        session.addInput(input)
+
+        let output = AVCaptureMetadataOutput()
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(context.coordinator, queue: .main)
+        output.metadataObjectTypes = [.ean8, .ean13, .upce, .qr, .code128]
+
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(preview)
+        context.coordinator.previewLayer = preview
+
+        DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        DispatchQueue.main.async {
+            context.coordinator.previewLayer?.frame = uiView.bounds
+        }
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.session?.stopRunning()
+    }
+
+    class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
+        let onFound: (String) -> Void
+        var session: AVCaptureSession?
+        var previewLayer: AVCaptureVideoPreviewLayer?
+        private var fired = false
+
+        init(onFound: @escaping (String) -> Void) { self.onFound = onFound }
+
+        func metadataOutput(_ output: AVCaptureMetadataOutput,
+                            didOutput objects: [AVMetadataObject],
+                            from connection: AVCaptureConnection) {
+            guard !fired,
+                  let obj = objects.first as? AVMetadataMachineReadableCodeObject,
+                  let value = obj.stringValue else { return }
+            fired = true
+            session?.stopRunning()
+            onFound(value)
+        }
+    }
+}
+
+// ── UIImagePickerController wrapper ──────────────────────────────────────────
+
+struct CameraPickerView: UIViewControllerRepresentable {
+    let onImagePicked: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPickerView
+        init(_ parent: CameraPickerView) { self.parent = parent }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onImagePicked(image)
+            } else {
+                parent.onCancel()
+            }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.onCancel()
         }
     }
 }
@@ -385,6 +556,7 @@ class ProgressViewModel {
 
 struct ProgressTrackingView: View {
     @State private var vm = ProgressViewModel()
+    @State private var hk = HealthKitManager.shared
 
     var body: some View {
         NavigationStack {
@@ -407,7 +579,12 @@ struct ProgressTrackingView: View {
                 }
             }
         }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            if hk.isAvailable {
+                await hk.requestAuthorization()
+            }
+        }
         .sheet(isPresented: $vm.showingWeightLogger) {
             weightLogSheet
                 .presentationDetents([.height(260)])
@@ -425,6 +602,11 @@ struct ProgressTrackingView: View {
                         WStatCard(value: "\(Int(s.avgProteinG))g", label: "Avg protein")
                         WStatCard(value: "\(s.bestStreak)", label: "Best streak")
                     }
+                }
+
+                // Apple Health activity
+                if hk.isAvailable {
+                    activitySection
                 }
 
                 // Weight history
@@ -466,6 +648,94 @@ struct ProgressTrackingView: View {
         }
         .background(Color.appBackground)
         .refreshable { await vm.load() }
+    }
+
+    private var activitySection: some View {
+        WCard {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                HStack {
+                    Label("Today's Activity", systemImage: "figure.run")
+                        .font(.labelMd)
+                    Spacer()
+                    Image(systemName: "heart.fill")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                    Text("Apple Health")
+                        .font(.caption)
+                        .foregroundColor(.textMuted)
+                }
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Spacing.sm) {
+                    activityTile(value: "\(hk.activity.steps.formatted())",
+                                 label: "Steps",
+                                 icon: "figure.walk",
+                                 color: .brandGreen)
+                    activityTile(value: "\(hk.activity.activeCalories) kcal",
+                                 label: "Active cal",
+                                 icon: "flame.fill",
+                                 color: .warning)
+                }
+
+                if !hk.activity.workouts.isEmpty {
+                    Divider()
+                    Text("Recent workouts")
+                        .font(.labelSm)
+                        .foregroundColor(.textMuted)
+                    ForEach(hk.activity.workouts.prefix(3)) { w in
+                        HStack {
+                            Image(systemName: workoutIcon(w.name))
+                                .frame(width: 28)
+                                .foregroundColor(.brandGreen)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(w.name).font(.labelSm)
+                                Text(w.date, style: .relative)
+                                    .font(.caption)
+                                    .foregroundColor(.textMuted)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("\(w.durationMinutes) min").font(.labelSm)
+                                if w.calories > 0 {
+                                    Text("\(w.calories) kcal")
+                                        .font(.caption)
+                                        .foregroundColor(.textMuted)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func activityTile(value: String, label: String, icon: String, color: Color) -> some View {
+        HStack(spacing: Spacing.sm) {
+            Image(systemName: icon)
+                .foregroundColor(color)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value).font(.labelMd)
+                Text(label).font(.caption).foregroundColor(.textMuted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.sm)
+        .background(color.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+    }
+
+    private func workoutIcon(_ name: String) -> String {
+        switch name {
+        case "Run":      return "figure.run"
+        case "Walk":     return "figure.walk"
+        case "Cycling":  return "figure.outdoor.cycle"
+        case "Swim":     return "figure.pool.swim"
+        case "Yoga":     return "figure.yoga"
+        case "Strength": return "dumbbell.fill"
+        case "HIIT":     return "bolt.fill"
+        case "Hike":     return "mountain.2.fill"
+        default:         return "figure.mixed.cardio"
+        }
     }
 
     private func weightDeltaBadge(_ delta: Double) -> some View {

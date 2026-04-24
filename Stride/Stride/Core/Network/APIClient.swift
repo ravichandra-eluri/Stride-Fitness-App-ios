@@ -51,7 +51,7 @@ actor APIClient {
     private let session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 120
+        cfg.timeoutIntervalForResource = 160
         cfg.waitsForConnectivity = true
         return URLSession(configuration: cfg)
     }()
@@ -262,6 +262,16 @@ extension APIClient {
     // Coach
     func getTodayCoachMessage() async throws -> CoachMessage {
         try await get("/api/coach/today")
+    }
+
+    // Food lookup
+    func lookupBarcode(_ barcode: String) async throws -> FoodNutrition {
+        try await get("/api/food/barcode/\(barcode)")
+    }
+
+    func analyzePhoto(imageBase64: String) async throws -> FoodNutrition {
+        struct Body: Encodable { let imageBase64: String }
+        return try await post("/api/food/analyze-photo", body: Body(imageBase64: imageBase64))
     }
 
     // Device token

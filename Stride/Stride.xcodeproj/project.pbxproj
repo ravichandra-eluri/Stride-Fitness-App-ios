@@ -256,6 +256,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Stride uses the camera to scan food barcodes and take photos for AI calorie estimation.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your steps, active calories, and workouts from Apple Health to show your activity alongside your nutrition progress.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -291,6 +293,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Stride uses the camera to scan food barcodes and take photos for AI calorie estimation.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your steps, active calories, and workouts from Apple Health to show your activity alongside your nutrition progress.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
