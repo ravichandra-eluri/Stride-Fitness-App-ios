@@ -1,135 +1,69 @@
-# Stride Fitness — iOS App
+# Stride — iOS App
 
-A personalized fitness and nutrition iOS app that combines AI-powered weight management, weekly meal planning, daily food logging, and coaching into a single streamlined experience.
+A personal fitness and nutrition app built with SwiftUI. Combines AI-powered meal planning, daily food logging, weight tracking, and a coach that adjusts its message based on how you're doing.
 
----
+## What it does
 
-## Features
+- **Onboarding** — 5-step setup that generates a personalized calorie target, macro split, and goal timeline using Claude
+- **Daily dashboard** — calorie ring, macro breakdown, today's food entries, streak badge, and a daily coach message
+- **Meal planning** — full week of AI-generated meals with one-tap swaps (similar calories, high protein, or quick prep)
+- **Food logging** — manual entry, barcode scan (Open Food Facts), or photo-based logging where Claude estimates the calories from an image
+- **Progress** — weekly summaries, weight history chart, Apple Health integration (steps, active calories, recent workouts)
+- **Coach tab** — daily motivational tip and priority meal focus based on yesterday's performance
+- **Settings** — edit profile (weight, goals, activity level, diet preferences), notification schedule, privacy policy, delete account
 
-- **AI Weight Loss Planning** — Onboarding generates a personalized calorie target, macro split, and goal timeline
-- **Weekly Meal Plans** — Browse a full week of meals with one-tap swaps (similar calories, high protein, quick prep)
-- **Food Logging** — Manual entry, barcode scan, and photo-based logging (Claude Vision API)
-- **Daily Dashboard** — Calorie ring, macro breakdown, today's meals, and streak badge
-- **AI Coach** — Daily motivational tips and priority meal focus
-- **Progress Tracking** — Weekly summaries, weight history chart, and weight logging
-- **Sign in with Apple** — Secure, private authentication with token refresh
+## Tech
 
----
+- Swift + SwiftUI, MVVM with `@Observable`
+- `async/await` throughout, no Combine
+- `URLSession` actor-based API client with automatic token refresh
+- Sign in with Apple + Bearer JWT
+- HealthKit for activity data
+- `UNUserNotificationCenter` for local reminders
+- AVFoundation for barcode scanning
+- Keychain for token storage, UserDefaults for notification preferences
 
-## Tech Stack
+Minimum target: **iOS 17**
 
-| Layer | Technology |
-|---|---|
-| Language | Swift |
-| UI | SwiftUI |
-| Architecture | MVVM + async/await |
-| Auth | Sign in with Apple + Bearer tokens |
-| Storage | Keychain (tokens), UserDefaults (flags) |
-| Networking | URLSession with automatic token refresh |
-| Backend | REST API on Google Cloud Run |
-
-**Minimum iOS target:** iOS 15+
-
----
-
-## Project Structure
+## Project structure
 
 ```
-Stride-Fitness-ios/
-├── Core/
-│   ├── Models/Models.swift        # All data models and API response types
-│   ├── Network/APIClient.swift    # Actor-based HTTP client with auth and token refresh
-│   └── Storage/Keychain.swift    # Secure token storage
-├── Features/
-│   ├── Auth/                      # Sign in with Apple flow
-│   ├── Onboarding/               # 5-step user setup → AI plan generation
-│   ├── Dashboard/                 # Home tab: daily summary, streak, profile
-│   ├── Meals/                     # Weekly meal plan + meal swap UI
-│   └── Log/                       # Food logging, coach messages, progress
-├── Shared/
-│   ├── Components/Components.swift  # Reusable WCard, WButton, WChip, WCalorieRing, etc.
-│   └── Theme/Theme.swift           # Design tokens: colors, typography, spacing, radius
-└── StrideApp.swift               # App entry point, root navigation, AppState
+Core/
+  Models/Models.swift                      # All data models and API response types
+  Network/APIClient.swift                  # Shared HTTP client with auth and token refresh
+  Health/HealthKitManager.swift            # Steps, calories, workouts from Apple Health
+  Storage/Keychain.swift                   # Secure token storage
+
+Features/
+  Auth/                                    # Sign in with Apple flow
+  Onboarding/                              # 5-step setup with AI plan generation
+  Dashboard/DashboardView.swift            # Home tab
+  Meals/MealPlanView.swift                 # Meal plan + swap UI
+  Log/LogCoachProgressViews.swift          # Food log, coach, and progress tabs
+  Settings/SettingsNotificationsViews.swift  # Edit profile and notifications
+
+Shared/
+  Components/Components.swift              # WCard, WButton, WChip, WCalorieRing, etc.
+  Theme/Theme.swift                        # Colors, typography, spacing, radius tokens
 ```
 
----
+## Getting started
 
-## Getting Started
+You need Xcode 15+, an Apple Developer account (for Sign in with Apple), and access to a running backend instance.
 
-### Prerequisites
+```bash
+git clone https://github.com/ravichandra-eluri/Stride-Fitness-App-ios
+open Stride/Stride.xcodeproj
+```
 
-- Xcode 15+
-- iOS 15+ simulator or physical device
-- Apple Developer account (for Sign in with Apple)
+The backend URL is configured in `Core/Network/APIClient.swift`. It falls back to the production Cloud Run URL if no `STRIDE_API_BASE_URL` key is set in Info.plist, so it works out of the box against prod.
 
-### Setup
+For Sign in with Apple, make sure the bundle ID and team ID in Signing & Capabilities match your Apple Developer account.
 
-1. Clone the repository:
-   ```bash
-   git clone <repo-url>
-   cd Stride-Fitness-ios
-   ```
+## Backend
 
-2. Open the project in Xcode:
-   ```bash
-   open Stride-Fitness-ios.xcodeproj
-   ```
+The REST API lives at [Stride-Fitness-App-backend](https://github.com/ravichandra-eluri/Stride-Fitness-App-backend) — Go + Postgres on GCP Cloud Run.
 
-3. Configure the backend URL in `Core/Network/APIClient.swift`:
-   ```swift
-   private let baseURL = "https://your-cloudrun-url.run.app"
-   ```
+## Design system
 
-4. Configure Sign in with Apple in your Xcode project's **Signing & Capabilities** tab.
-
-5. Build and run on your target device or simulator.
-
----
-
-## API Overview
-
-The app communicates with a REST backend(Stride-Fitness-App) deployed on Google Cloud Run:
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/api/auth/apple` | Sign in with Apple |
-| POST | `/api/auth/refresh` | Refresh access token |
-| POST | `/api/onboarding/complete` | Submit onboarding → get AI plan |
-| GET/PATCH | `/api/profile` | Fetch or update user profile |
-| GET | `/api/meals/plan` | Fetch weekly meal plan |
-| POST | `/api/meals/swap` | Swap a meal with an AI alternative |
-| POST | `/api/log/food` | Log a food entry |
-| GET | `/api/log/today` | Fetch today's food log |
-| POST | `/api/log/weight` | Log a weight entry |
-| GET | `/api/progress/weekly` | Weekly summary stats |
-| GET | `/api/progress/weights` | Weight history |
-| GET | `/api/coach/today` | Daily coach message |
-
----
-
-## Design System
-
-The app uses centralized design tokens defined in `Shared/Theme/Theme.swift`:
-
-- **Brand colors:** Green `#1D9E75`, Purple `#7F77DD`
-- **Typography:** 6 text styles from `titleLg` to `bodySm`
-- **Spacing scale:** `xs` (4pt) → `xxl` (48pt)
-- **Corner radius:** `sm` (8pt) → `lg` (16pt)
-
-The app is locked to **light mode** for v1.
-
----
-
-## Roadmap
-
-- [ ] Wire barcode scanning (AVFoundation)
-- [ ] Enable photo-based food logging (Claude Vision API)
-- [ ] Replace placeholder weight chart with Swift Charts (iOS 16+)
-- [ ] Push notification permissions and content
-- [ ] Connect production Cloud Run backend URL
-
----
-
-## Related
-
-- [stride-backend](../stride-backend) — Cloud Run backend powering this app
+Centralized in `Shared/Theme/Theme.swift`. Brand green `#1D9E75`, brand purple `#7F77DD`. Six text styles, spacing scale from 4pt to 48pt, two corner radius values. Dark mode only for v1.
