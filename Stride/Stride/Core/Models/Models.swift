@@ -55,15 +55,26 @@ struct OnboardingPlanResponse: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        calorieTarget = try container.decode(Int.self, forKey: .calorieTarget)
-        proteinTarget = try container.decodeIfPresent(Int.self, forKey: .proteinTarget) ?? 0
-        carbsTarget = try container.decodeIfPresent(Int.self, forKey: .carbsTarget) ?? 0
-        fatTarget = try container.decodeIfPresent(Int.self, forKey: .fatTarget) ?? 0
+        calorieTarget = Int((try container.decodeIfPresent(Double.self, forKey: .calorieTarget)) ?? 0)
+        proteinTarget = Int((try container.decodeIfPresent(Double.self, forKey: .proteinTarget)) ?? 0)
+        carbsTarget   = Int((try container.decodeIfPresent(Double.self, forKey: .carbsTarget)) ?? 0)
+        fatTarget     = Int((try container.decodeIfPresent(Double.self, forKey: .fatTarget)) ?? 0)
         weeklyLossKg = try container.decodeIfPresent(Double.self, forKey: .weeklyLossKg) ?? 0
         goalDate = try container.decodeIfPresent(String.self, forKey: .goalDate) ?? "Goal date coming soon"
         coachMessage = try container.decodeIfPresent(String.self, forKey: .coachMessage) ?? "Your plan is ready. Start with one consistent day and build from there."
         planSummary = try container.decodeIfPresent(String.self, forKey: .planSummary) ?? "Your calorie target and meal plan are ready. We’ll keep refining your guidance as you log progress."
     }
+}
+
+// ── Food lookup ───────────────────────────────────────────────────────────────
+
+struct FoodNutrition: Decodable {
+    let name: String
+    let calories: Int
+    let proteinG: Double
+    let carbsG: Double
+    let fatG: Double
+    let servingSize: String
 }
 
 // ── Meal plan ─────────────────────────────────────────────────────────────────
