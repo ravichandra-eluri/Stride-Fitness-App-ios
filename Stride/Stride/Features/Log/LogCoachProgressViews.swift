@@ -50,7 +50,7 @@ class LogFoodViewModel {
     var fatG: Double? = nil
     var mealType: String = "lunch"
     var servingSize: String = "1 serving"
-    var logMethod: String = "manual"
+    var logMethod: String = "photo"
     var isLogging = false
     var successMessage: String?
     var error: String?
@@ -759,7 +759,7 @@ struct ProgressTrackingView: View {
                 // Weekly stats grid
                 if let s = vm.summary {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Spacing.sm) {
-                        WStatCard(value: "\(s.daysOnPlan)/\(s.daysLogged)", label: "Days on plan")
+                        WStatCard(value: "\(s.daysLogged)", label: "Days logged")
                         WStatCard(value: "\(s.avgCalories)", label: "Avg cal/day")
                         WStatCard(value: "\(Int(s.avgProteinG))g", label: "Avg protein")
                         WStatCard(value: "\(s.bestStreak)", label: "Best streak")

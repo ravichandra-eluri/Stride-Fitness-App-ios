@@ -59,7 +59,11 @@ final class HealthKitManager {
     private func fetchSteps() async -> Int {
         guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return 0 }
         let start = Calendar.current.startOfDay(for: Date())
-        let pred  = HKQuery.predicateForSamples(withStart: start, end: Date())
+        // Filter to the current device only — summing all sources double-counts when
+        // third-party apps (Google Fit, Pedometer++, etc.) also write step data to HealthKit.
+        let timePred   = HKQuery.predicateForSamples(withStart: start, end: Date())
+        let devicePred = HKQuery.predicateForObjects(from: [HKDevice.local()])
+        let pred       = NSCompoundPredicate(andPredicateWithSubpredicates: [timePred, devicePred])
         return await withCheckedContinuation { cont in
             let q = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: pred, options: .cumulativeSum) { _, stats, _ in
                 let val = stats?.sumQuantity()?.doubleValue(for: .count()) ?? 0

@@ -97,13 +97,11 @@ class DashboardViewModel {
     /// failure we reload from source of truth so state stays consistent.
     func deleteEntry(_ entry: FoodEntry) async {
         let originalLog = todayLog
-        if let idx = todayLog?.entries?.firstIndex(where: { $0.id == entry.id }) {
-            todayLog?.entries?.remove(at: idx)
-            if todayLog?.entries?.isEmpty == true {
-                todayLog?.entries = []
-            }
-            if let log = todayLog?.log {
-                todayLog?.log = DailyLog(
+        // Rebuild the entire struct so @Observable reliably fires and the ring updates immediately.
+        if var updated = todayLog {
+            updated.entries?.removeAll(where: { $0.id == entry.id })
+            if let log = updated.log {
+                updated.log = DailyLog(
                     id: log.id,
                     caloriesEaten: max(log.caloriesEaten - entry.calories, 0),
                     proteinG: max(log.proteinG - entry.proteinG, 0),
@@ -113,11 +111,13 @@ class DashboardViewModel {
                     streakDay: log.streakDay
                 )
             }
+            todayLog = updated
             Haptics.impact(.light)
         }
         do {
             try await APIClient.shared.deleteFoodEntry(id: entry.id)
-            await load()
+            // Optimistic update already applied above — don't reload here.
+            // load() would race the server and could overwrite with stale data.
         } catch {
             todayLog = originalLog
             Haptics.notify(.error)
