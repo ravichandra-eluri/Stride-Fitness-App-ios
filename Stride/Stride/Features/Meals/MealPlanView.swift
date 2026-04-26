@@ -16,6 +16,7 @@ class MealPlanViewModel {
     var isSwapping = false
     var selectedFilter = "similar_calories"
     var error: String?
+    var swapError: String?
     var noProfile = false
     var swapSelectionKey: String?
 
@@ -80,14 +81,14 @@ class MealPlanViewModel {
         isSwapping = true
         swapAlternatives = []
         swapSelectionKey = nil
+        swapError = nil
         do {
-            let res = try await APIClient.shared.swapMeal(
+            swapAlternatives = try await APIClient.shared.swapMeal(
                 mealPlanID: "", day: selectedDay,
                 meal: meal, filter: selectedFilter
             )
-            swapAlternatives = res.alternatives
         } catch {
-            self.error = error.localizedDescription
+            swapError = error.localizedDescription
         }
         isSwapping = false
     }
@@ -485,6 +486,24 @@ struct MealSwapSheet: View {
 
                 if vm.isSwapping {
                     WLoadingView(message: "Finding alternatives...")
+                } else if let err = vm.swapError {
+                    VStack(spacing: Spacing.md) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 32))
+                            .foregroundColor(.warning)
+                        Text("Couldn't load alternatives")
+                            .font(.labelMd)
+                        Text(err)
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                            .multilineTextAlignment(.center)
+                        WButton(title: "Try again") {
+                            if let meal = vm.swapTargetMeal {
+                                Task { await vm.loadSwapAlternatives(for: meal) }
+                            }
+                        }
+                    }
+                    .padding(Spacing.lg)
                 } else {
                     ScrollView {
                         VStack(spacing: Spacing.sm) {

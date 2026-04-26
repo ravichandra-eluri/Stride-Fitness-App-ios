@@ -216,7 +216,7 @@ extension APIClient {
         return try await post("/api/meals/regenerate", body: Empty())
     }
 
-    func swapMeal(mealPlanID: String, day: String, meal: Meal, filter: String) async throws -> MealSwapResponse {
+    func swapMeal(mealPlanID: String, day: String, meal: Meal, filter: String) async throws -> [Meal] {
         struct Body: Encodable {
             let mealPlanId: String
             let day: String

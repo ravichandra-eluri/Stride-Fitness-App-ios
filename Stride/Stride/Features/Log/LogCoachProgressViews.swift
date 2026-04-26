@@ -525,6 +525,11 @@ class ProgressViewModel {
         do {
             weightHistory = try await APIClient.shared.getWeightHistory()
             weightHistory.sort { $0.loggedAtDate < $1.loggedAtDate }
+            if let latest = weightHistory.last {
+                newWeight = latest.weightKg
+            } else if let profile = try? await APIClient.shared.getProfile() {
+                newWeight = profile.currentWeightKg
+            }
         }
         catch { print("[Progress] weightHistory: \(error)") }
 

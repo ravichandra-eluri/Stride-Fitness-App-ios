@@ -32,6 +32,14 @@ struct MainTabView: View {
         }
         .tint(Color.brandGreen)
         .onChange(of: selectedTab) { _, _ in Haptics.selection() }
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder),
+                    to: nil, from: nil, for: nil
+                )
+            }
+        )
     }
 }
 
@@ -168,11 +176,8 @@ struct DashboardView: View {
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         let name = vm.profile?.name.components(separatedBy: " ").first ?? ""
-        switch hour {
-        case 0..<12: return "Good morning\(name.isEmpty ? "" : ", \(name)")"
-        case 12..<17: return "Good afternoon\(name.isEmpty ? "" : ", \(name)")"
-        default: return "Good evening\(name.isEmpty ? "" : ", \(name)")"
-        }
+        let time = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening"
+        return name.isEmpty ? time : "\(time), \(name)"
     }
 
     private var dashboardContent: some View {
@@ -232,7 +237,11 @@ struct DashboardView: View {
                                     .font(.bodySm)
                                     .foregroundColor(.textMuted)
                                 }
-                                WMacroRow(protein: vm.protein, carbs: vm.carbs, fat: vm.fat)
+                                HStack(spacing: Spacing.sm) {
+                                    Text("P \(Int(vm.protein))g").font(.bodySm).foregroundColor(.brandPurple)
+                                    Text("C \(Int(vm.carbs))g").font(.bodySm).foregroundColor(.brandGreen)
+                                    Text("F \(Int(vm.fat))g").font(.bodySm).foregroundColor(.warning)
+                                }
                             }
                             Spacer()
                             Image(systemName: "chevron.right")

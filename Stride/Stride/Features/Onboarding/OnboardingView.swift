@@ -542,47 +542,49 @@ struct OnboardingResultScreen: View {
     let onComplete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            WSectionHeader(
-                eyebrow: "Ready",
-                title: "Meet your coach",
-                subtitle: "Your first plan is ready. You can start with this immediately and adjust it over time."
-            )
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.lg) {
+                WSectionHeader(
+                    eyebrow: "Ready",
+                    title: "Meet your coach",
+                    subtitle: "Your first plan is ready. You can start with this immediately and adjust it over time."
+                )
 
-            if let plan = vm.plan {
-                WHeroCard {
-                    VStack(alignment: .leading, spacing: Spacing.md) {
-                        WCoachBubble(message: plan.coachMessage)
-                        HStack(spacing: Spacing.md) {
-                            WStatCard(value: "\(plan.calorieTarget)", label: "daily cal", valueColor: .brandGreen)
-                            WStatCard(value: String(format: "%.1f", plan.weeklyLossKg), label: "kg / week", valueColor: .brandPurple)
+                if let plan = vm.plan {
+                    WHeroCard {
+                        VStack(alignment: .leading, spacing: Spacing.md) {
+                            WCoachBubble(message: plan.coachMessage)
+                            HStack(spacing: Spacing.md) {
+                                WStatCard(value: "\(plan.calorieTarget)", label: "daily cal", valueColor: .brandGreen)
+                                WStatCard(value: String(format: "%.1f", plan.weeklyLossKg), label: "kg / week", valueColor: .brandPurple)
+                            }
                         }
+                    }
+
+                    VStack(spacing: Spacing.sm) {
+                        resultRow(
+                            icon: "chart.line.downtrend.xyaxis",
+                            title: "Weight loss plan",
+                            detail: plan.planSummary
+                        )
+                        resultRow(
+                            icon: "flame.fill",
+                            title: "Daily calorie target",
+                            detail: "\(plan.calorieTarget) cal / day"
+                        )
+                        resultRow(
+                            icon: "calendar",
+                            title: "Goal date",
+                            detail: plan.goalDate
+                        )
                     }
                 }
 
-                VStack(spacing: Spacing.sm) {
-                    resultRow(
-                        icon: "chart.line.downtrend.xyaxis",
-                        title: "Weight loss plan",
-                        detail: plan.planSummary
-                    )
-                    resultRow(
-                        icon: "flame.fill",
-                        title: "Daily calorie target",
-                        detail: "\(plan.calorieTarget) cal / day"
-                    )
-                    resultRow(
-                        icon: "calendar",
-                        title: "Goal date",
-                        detail: plan.goalDate
-                    )
-                }
+                WButton(title: "Go to my dashboard", action: onComplete)
+                    .padding(.top, Spacing.sm)
             }
-
-            Spacer()
-            WButton(title: "Go to my dashboard", action: onComplete)
+            .padding(Spacing.lg)
         }
-        .padding(Spacing.lg)
     }
 
     private func resultRow(icon: String, title: String, detail: String) -> some View {
