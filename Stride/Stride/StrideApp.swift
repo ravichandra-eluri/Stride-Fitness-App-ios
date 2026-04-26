@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct StrideApp: App {
@@ -10,6 +11,32 @@ struct StrideApp: App {
                 .environment(appState)
                 .tint(.brandGreen)
         }
+    }
+}
+
+// Tap anywhere on the window to dismiss the keyboard without cancelling child taps.
+private final class KeyboardDismissTapRecognizer: UITapGestureRecognizer, UIGestureRecognizerDelegate {
+    init() {
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delegate = self
+        addTarget(self, action: #selector(handleTap))
+    }
+
+    @objc private func handleTap() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        return true
+    }
+
+    // Don't intercept taps that land on interactive controls — let buttons get clean touches.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldReceive touch: UITouch) -> Bool {
+        return !(touch.view is UIControl)
     }
 }
 
@@ -35,6 +62,16 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.35), value: appState.route)
+        .onAppear { installKeyboardDismissTap() }
+    }
+
+    private func installKeyboardDismissTap() {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
+        else { return }
+        // Only install once — check if already present.
+        if window.gestureRecognizers?.contains(where: { $0 is KeyboardDismissTapRecognizer }) == true { return }
+        window.addGestureRecognizer(KeyboardDismissTapRecognizer())
     }
 }
 

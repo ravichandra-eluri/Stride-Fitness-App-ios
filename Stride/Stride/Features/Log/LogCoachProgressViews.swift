@@ -5,9 +5,42 @@ import AVFoundation
 
 // ── Log Food View ─────────────────────────────────────────────────────────────
 
+struct FoodSuggestion: Identifiable {
+    let id = UUID()
+    let name: String
+    let calories: Int
+    let proteinG: Double
+    let carbsG: Double
+    let fatG: Double
+}
+
+// Open Food Facts response shapes (internal to food search)
+private struct OFFResponse: Decodable {
+    let products: [OFFProduct]
+}
+private struct OFFProduct: Decodable {
+    let productName: String?
+    let nutriments: OFFNutriments?
+    enum CodingKeys: String, CodingKey {
+        case productName = "product_name"
+        case nutriments
+    }
+}
+private struct OFFNutriments: Decodable {
+    let energyKcal100g: Double?
+    let proteins100g: Double?
+    let carbohydrates100g: Double?
+    let fat100g: Double?
+    enum CodingKeys: String, CodingKey {
+        case energyKcal100g    = "energy-kcal_100g"
+        case proteins100g      = "proteins_100g"
+        case carbohydrates100g = "carbohydrates_100g"
+        case fat100g           = "fat_100g"
+    }
+}
+
 @Observable
 @MainActor
-
 class LogFoodViewModel {
     var foodName: String = ""
     // Optional so a fresh field renders empty (placeholder) instead of "0".
@@ -21,8 +54,12 @@ class LogFoodViewModel {
     var isLogging = false
     var successMessage: String?
     var error: String?
-
     var isLookingUp = false
+
+    var suggestions: [FoodSuggestion] = []
+    var showSuggestions = false
+    var isSearching = false
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
 
     var isValid: Bool { !foodName.isEmpty && (calories ?? 0) > 0 }
 
@@ -34,6 +71,78 @@ class LogFoodViewModel {
         fatG       = n.fatG
         servingSize = n.servingSize.isEmpty ? "1 serving" : n.servingSize
         logMethod  = "manual"
+    }
+
+    // Tracks the name last set by applySuggestion so onChange doesn't re-trigger a search.
+    @ObservationIgnored private var lastAppliedName = ""
+
+    func applySuggestion(_ s: FoodSuggestion) {
+        searchTask?.cancel()
+        lastAppliedName = s.name
+        foodName    = s.name
+        calories    = s.calories
+        proteinG    = s.proteinG
+        carbsG      = s.carbsG
+        fatG        = s.fatG
+        servingSize = "100g"
+        logMethod   = "manual"
+        suggestions = []
+        showSuggestions = false
+        isSearching = false
+    }
+
+    func searchFood(_ query: String) {
+        // Ignore the onChange that fires when applySuggestion programmatically sets foodName.
+        if query == lastAppliedName {
+            lastAppliedName = ""
+            return
+        }
+        searchTask?.cancel()
+        guard query.count >= 2 else {
+            suggestions = []
+            showSuggestions = false
+            isSearching = false
+            return
+        }
+        isSearching = true
+        searchTask = Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+
+            var comps = URLComponents(string: "https://world.openfoodfacts.org/cgi/search.pl")!
+            comps.queryItems = [
+                URLQueryItem(name: "search_terms", value: query),
+                URLQueryItem(name: "json",         value: "1"),
+                URLQueryItem(name: "page_size",    value: "5"),
+                URLQueryItem(name: "fields",       value: "product_name,nutriments"),
+            ]
+            guard let url = comps.url else { isSearching = false; return }
+
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                guard !Task.isCancelled else { return }
+                let response = try JSONDecoder().decode(OFFResponse.self, from: data)
+                let results: [FoodSuggestion] = response.products.compactMap { p in
+                    guard let name = p.productName, !name.isEmpty,
+                          let n = p.nutriments,
+                          let kcal = n.energyKcal100g, kcal > 0
+                    else { return nil }
+                    return FoodSuggestion(
+                        name: name,
+                        calories: Int(kcal),
+                        proteinG: n.proteins100g ?? 0,
+                        carbsG: n.carbohydrates100g ?? 0,
+                        fatG: n.fat100g ?? 0
+                    )
+                }
+                suggestions = results
+                showSuggestions = !results.isEmpty
+            } catch {
+                suggestions = []
+                showSuggestions = false
+            }
+            isSearching = false
+        }
     }
 
     func logFood() async -> Bool {
@@ -66,6 +175,8 @@ class LogFoodViewModel {
         foodName = ""
         calories = nil; proteinG = nil; carbsG = nil; fatG = nil
         servingSize = "1 serving"
+        suggestions = []
+        showSuggestions = false
     }
 }
 
@@ -160,9 +271,55 @@ struct LogFoodView: View {
     private var manualForm: some View {
         WCard {
             VStack(alignment: .leading, spacing: Spacing.md) {
-                formField("Food name") {
-                    TextField("e.g. Chicken rice bowl", text: $vm.foodName)
-                        .focused($focusedField, equals: .foodName)
+                VStack(alignment: .leading, spacing: 0) {
+                    formField("Food name") {
+                        HStack {
+                            TextField("e.g. Chicken rice bowl", text: $vm.foodName)
+                                .focused($focusedField, equals: .foodName)
+                                .onChange(of: vm.foodName) { _, new in vm.searchFood(new) }
+                                .onChange(of: focusedField) { _, field in
+                                    if field != .foodName { vm.showSuggestions = false }
+                                }
+                            if vm.isSearching {
+                                ProgressView().scaleEffect(0.7)
+                            }
+                        }
+                    }
+                    if vm.showSuggestions {
+                        VStack(spacing: 0) {
+                            ForEach(vm.suggestions) { s in
+                                Button {
+                                    vm.applySuggestion(s)
+                                    focusedField = nil
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(s.name)
+                                                .font(.bodySm)
+                                                .lineLimit(1)
+                                            Text("P \(Int(s.proteinG))g  C \(Int(s.carbsG))g  F \(Int(s.fatG))g  · per 100g")
+                                                .font(.labelSm)
+                                                .foregroundColor(.textMuted)
+                                        }
+                                        Spacer()
+                                        Text("\(s.calories) cal")
+                                            .font(.labelSm)
+                                            .foregroundColor(.brandGreen)
+                                    }
+                                    .padding(.horizontal, Spacing.sm)
+                                    .padding(.vertical, Spacing.xs)
+                                }
+                                .buttonStyle(.plain)
+                                if s.id != vm.suggestions.last?.id {
+                                    Divider().padding(.horizontal, Spacing.sm)
+                                }
+                            }
+                        }
+                        .background(Color.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.border, lineWidth: 0.5))
+                        .padding(.top, 2)
+                    }
                 }
                 formField("Meal type") {
                     Picker("", selection: $vm.mealType) {

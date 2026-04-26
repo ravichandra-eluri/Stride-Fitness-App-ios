@@ -67,6 +67,7 @@ class OnboardingViewModel {
 
         do {
             plan = try await APIClient.shared.completeOnboarding(profile: buildProfile)
+            try? await APIClient.shared.logWeight(currentWeight)
             withAnimation { currentStep = 4 } // jump to result screen
         } catch {
             withAnimation(.easeInOut(duration: 0.25)) {

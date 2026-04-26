@@ -31,15 +31,13 @@ struct MainTabView: View {
                 .tag(4)
         }
         .tint(Color.brandGreen)
-        .onChange(of: selectedTab) { _, _ in Haptics.selection() }
-        .simultaneousGesture(
-            TapGesture().onEnded { _ in
-                UIApplication.shared.sendAction(
-                    #selector(UIResponder.resignFirstResponder),
-                    to: nil, from: nil, for: nil
-                )
-            }
-        )
+        .onChange(of: selectedTab) { _, _ in
+            Haptics.selection()
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+        }
     }
 }
 
