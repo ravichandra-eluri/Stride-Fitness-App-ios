@@ -8,6 +8,7 @@ import Combine
 
 class MealPlanViewModel {
     var plan: WeeklyMealPlan?
+    var profile: UserProfile?
     var selectedDay: String = ""
     var isLoading = true
     var isRegenerating = false
@@ -29,7 +30,10 @@ class MealPlanViewModel {
         error = nil
         noProfile = false
         do {
-            plan = try await APIClient.shared.getMealPlan()
+            async let planTask    = APIClient.shared.getMealPlan()
+            async let profileTask = APIClient.shared.getProfile()
+            plan    = try await planTask
+            profile = try? await profileTask
             selectedDay = plan?.days.first?.day ?? ""
         } catch let apiError as APIError {
             if case .serverError(404, let msg) = apiError {
@@ -197,22 +201,32 @@ struct MealPlanView: View {
                 VStack(spacing: Spacing.sm) {
                     if let day = vm.currentDayPlan {
                         WHeroCard {
-                            HStack(alignment: .center) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(day.day)
-                                        .font(.titleMd)
-                                    Text("Planned around your current goal")
-                                        .font(.bodySm)
-                                        .foregroundColor(.textMuted)
+                            VStack(alignment: .leading, spacing: Spacing.sm) {
+                                HStack(alignment: .center) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(day.day)
+                                            .font(.titleMd)
+                                        Text("Planned around your current goal")
+                                            .font(.bodySm)
+                                            .foregroundColor(.textMuted)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("\(day.totalCalories)")
+                                            .font(.numericMd)
+                                            .foregroundColor(.brandGreen)
+                                        Text("cal total")
+                                            .font(.bodySm)
+                                            .foregroundColor(.textMuted)
+                                    }
                                 }
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text("\(day.totalCalories)")
-                                        .font(.numericMd)
-                                        .foregroundColor(.brandGreen)
-                                    Text("cal total")
-                                        .font(.bodySm)
-                                        .foregroundColor(.textMuted)
+                                if let p = vm.profile, p.proteinTargetG > 0 {
+                                    Divider()
+                                    HStack(spacing: Spacing.lg) {
+                                        macroTarget(label: "Protein", value: p.proteinTargetG, color: .brandPurple)
+                                        macroTarget(label: "Carbs",   value: p.carbsTargetG,   color: .brandGreen)
+                                        macroTarget(label: "Fat",     value: p.fatTargetG,     color: .warning)
+                                    }
                                 }
                             }
                         }
@@ -255,6 +269,17 @@ struct MealPlanView: View {
             ctaTitle: vm.isRegenerating ? "Generating..." : "Generate meal plan",
             ctaAction: { Task { await vm.regenerate() } }
         )
+    }
+
+    private func macroTarget(label: String, value: Int, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Text("\(value)g")
+                .font(.labelSm)
+                .foregroundColor(color)
+            Text(label)
+                .font(.bodySm)
+                .foregroundColor(.textMuted)
+        }
     }
 
     private func mealCard(_ meal: Meal) -> some View {

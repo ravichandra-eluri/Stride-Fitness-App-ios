@@ -77,6 +77,9 @@ class DashboardViewModel {
     var protein: Double    { todayLog?.log?.proteinG ?? 0 }
     var carbs: Double      { todayLog?.log?.carbsG ?? 0 }
     var fat: Double        { todayLog?.log?.fatG ?? 0 }
+    var proteinTarget: Int { profile?.proteinTargetG ?? 0 }
+    var carbsTarget: Int   { profile?.carbsTargetG ?? 0 }
+    var fatTarget: Int     { profile?.fatTargetG ?? 0 }
     var streakDays: Int    { todayLog?.log?.streakDay ?? 0 }
 
     // Goal progress — uses weight log history if available, falls back to profile
@@ -236,9 +239,9 @@ struct DashboardView: View {
                                     .foregroundColor(.textMuted)
                                 }
                                 HStack(spacing: Spacing.sm) {
-                                    Text("P \(Int(vm.protein))g").font(.bodySm).foregroundColor(.brandPurple)
-                                    Text("C \(Int(vm.carbs))g").font(.bodySm).foregroundColor(.brandGreen)
-                                    Text("F \(Int(vm.fat))g").font(.bodySm).foregroundColor(.warning)
+                                    Text("P \(Int(vm.protein))/\(vm.proteinTarget)g").font(.bodySm).foregroundColor(.brandPurple)
+                                    Text("C \(Int(vm.carbs))/\(vm.carbsTarget)g").font(.bodySm).foregroundColor(.brandGreen)
+                                    Text("F \(Int(vm.fat))/\(vm.fatTarget)g").font(.bodySm).foregroundColor(.warning)
                                 }
                             }
                             Spacer()
@@ -473,9 +476,18 @@ struct CalorieDetailSheet: View {
                     // Macros
                     WCard {
                         VStack(alignment: .leading, spacing: Spacing.md) {
-                            Text("Macros so far")
-                                .font(.labelMd)
-                            WMacroRow(protein: vm.protein, carbs: vm.carbs, fat: vm.fat)
+                            HStack {
+                                Text("Macros").font(.labelMd)
+                                Spacer()
+                                Text("\(vm.calorieTarget) cal = \(vm.proteinTarget)g P · \(vm.carbsTarget)g C · \(vm.fatTarget)g F")
+                                    .font(.caption)
+                                    .foregroundColor(.textMuted)
+                            }
+                            WMacroRow(
+                                protein: vm.protein, proteinTarget: Double(vm.proteinTarget),
+                                carbs: vm.carbs, carbsTarget: Double(vm.carbsTarget),
+                                fat: vm.fat, fatTarget: Double(vm.fatTarget)
+                            )
                         }
                     }
                     .padding(.horizontal, Spacing.md)

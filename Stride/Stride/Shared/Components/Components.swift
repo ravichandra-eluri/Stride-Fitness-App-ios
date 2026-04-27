@@ -298,26 +298,47 @@ struct WCalorieRing: View {
 
 struct WMacroRow: View {
     let protein: Double
+    var proteinTarget: Double = 0
     let carbs: Double
+    var carbsTarget: Double = 0
     let fat: Double
+    var fatTarget: Double = 0
 
     var body: some View {
         HStack(spacing: Spacing.lg) {
-            macroItem(label: "Protein", value: protein, color: .brandPurple)
-            macroItem(label: "Carbs",   value: carbs,   color: .brandGreen)
-            macroItem(label: "Fat",     value: fat,     color: .warning)
+            macroItem(label: "Protein", value: protein, target: proteinTarget, color: .brandPurple)
+            macroItem(label: "Carbs",   value: carbs,   target: carbsTarget,   color: .brandGreen)
+            macroItem(label: "Fat",     value: fat,     target: fatTarget,     color: .warning)
         }
     }
 
-    private func macroItem(label: String, value: Double, color: Color) -> some View {
-        VStack(spacing: 2) {
-            Text("\(Int(value))g")
-                .font(.labelMd)
-                .foregroundColor(color)
+    private func macroItem(label: String, value: Double, target: Double, color: Color) -> some View {
+        VStack(spacing: 4) {
+            if target > 0 {
+                Text("\(Int(value))/\(Int(target))g")
+                    .font(.labelMd)
+                    .foregroundColor(color)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(color.opacity(0.15))
+                            .frame(height: 4)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(color)
+                            .frame(width: geo.size.width * min(value / target, 1), height: 4)
+                    }
+                }
+                .frame(height: 4)
+            } else {
+                Text("\(Int(value))g")
+                    .font(.labelMd)
+                    .foregroundColor(color)
+            }
             Text(label)
                 .font(.bodySm)
                 .foregroundColor(.textMuted)
         }
+        .frame(maxWidth: .infinity)
     }
 }
 

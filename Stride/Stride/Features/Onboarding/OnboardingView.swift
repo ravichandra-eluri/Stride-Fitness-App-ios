@@ -7,7 +7,7 @@ import SwiftUI
 
 class OnboardingViewModel {
     // Form state
-    var goal: String = "lose_weight"
+    var goals: Set<String> = ["lose_weight"]
     var name: String = ""
     var age: Int = 30
     var gender: String = "male"
@@ -27,6 +27,14 @@ class OnboardingViewModel {
     var plan: OnboardingPlanResponse?
     var isGenerating = false
     var error: String?
+
+    func toggleGoal(_ id: String) {
+        if goals.contains(id) {
+            if goals.count > 1 { goals.remove(id) }
+        } else {
+            goals.insert(id)
+        }
+    }
 
     func toggleDietPref(_ pref: String) {
         if pref == "none" {
@@ -53,7 +61,7 @@ class OnboardingViewModel {
             heightCm: heightCm, currentWeightKg: currentWeight,
             goalWeightKg: goalWeight, timelineMonths: timelineMonths,
             activityLevel: activityLevel, dailyMinutes: dailyMinutes,
-            dietPrefs: Array(dietPrefs), primaryGoal: goal,
+            dietPrefs: Array(dietPrefs), primaryGoal: goals.sorted().joined(separator: ","),
             calorieTarget: 0, proteinTargetG: 0, carbsTargetG: 0, fatTargetG: 0
         )
     }
@@ -184,8 +192,8 @@ struct OnboardingGoalScreen: View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             WSectionHeader(
                 eyebrow: "Goal",
-                title: "What's your main goal?",
-                subtitle: "We'll shape the entire Stride experience around the outcome you care about most."
+                title: "What are your goals?",
+                subtitle: "Pick everything that matters — we'll build your plan around all of them."
             )
 
             WHeroCard {
@@ -217,10 +225,10 @@ struct OnboardingGoalScreen: View {
     }
 
     private func goalCard(id: String, title: String, subtitle: String, icon: String) -> some View {
-        let selected = vm.goal == id
+        let selected = vm.goals.contains(id)
         return Button {
             Haptics.selection()
-            vm.goal = id
+            vm.toggleGoal(id)
         } label: {
             HStack(spacing: Spacing.md) {
                 Image(systemName: icon)
