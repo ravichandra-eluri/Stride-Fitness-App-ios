@@ -81,6 +81,10 @@ actor APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        let localDateFormatter = DateFormatter()
+        localDateFormatter.dateFormat = "yyyy-MM-dd"
+        req.setValue(localDateFormatter.string(from: Date()), forHTTPHeaderField: "X-Local-Date")
+
         if requiresAuth {
             let token = try await validAccessToken()
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

@@ -850,7 +850,7 @@ struct ProgressTrackingView: View {
                                 .foregroundColor(.brandGreen)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(w.name).font(.labelSm)
-                                Text(w.date, style: .relative)
+                                Text(w.date, style: .date)
                                     .font(.caption)
                                     .foregroundColor(.textMuted)
                             }
