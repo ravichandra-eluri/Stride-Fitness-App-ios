@@ -43,11 +43,16 @@ private struct OFFNutriments: Decodable {
 @MainActor
 class LogFoodViewModel {
     var foodName: String = ""
-    // Optional so a fresh field renders empty (placeholder) instead of "0".
-    var calories: Int? = nil
-    var proteinG: Double? = nil
-    var carbsG: Double? = nil
-    var fatG: Double? = nil
+    // Per-serving base values. Optional so a fresh field renders empty
+    // (placeholder) instead of "0". Renamed from calories/proteinG/... to
+    // make it explicit these are *per serving*, not what gets logged.
+    var baseCalories: Int? = nil
+    var baseProteinG: Double? = nil
+    var baseCarbsG: Double? = nil
+    var baseFatG: Double? = nil
+    // Multiplier the user adjusts for "I ate 2 servings". Defaults to 1 so
+    // typed-only entries (no quantity tweak) behave the same as before.
+    var servings: Double = 1.0
     var mealType: String = "lunch"
     var servingSize: String = "1 serving"
     var logMethod: String = "photo"
@@ -61,16 +66,33 @@ class LogFoodViewModel {
     var isSearching = false
     @ObservationIgnored private var searchTask: Task<Void, Never>?
 
-    var isValid: Bool { !foodName.isEmpty && (calories ?? 0) > 0 }
+    // Live totals = base × servings. These are what gets logged.
+    var totalCalories: Int { Int((Double(baseCalories ?? 0) * servings).rounded()) }
+    var totalProteinG: Double { (baseProteinG ?? 0) * servings }
+    var totalCarbsG:   Double { (baseCarbsG   ?? 0) * servings }
+    var totalFatG:     Double { (baseFatG     ?? 0) * servings }
+
+    var isValid: Bool { !foodName.isEmpty && totalCalories > 0 && servings > 0 }
+
+    func incrementServings() {
+        servings = min(round((servings + 0.5) * 10) / 10, 99)
+        Haptics.selection()
+    }
+
+    func decrementServings() {
+        servings = max(round((servings - 0.5) * 10) / 10, 0.5)
+        Haptics.selection()
+    }
 
     func applyNutrition(_ n: FoodNutrition) {
-        foodName   = n.name
-        calories   = n.calories
-        proteinG   = n.proteinG
-        carbsG     = n.carbsG
-        fatG       = n.fatG
-        servingSize = n.servingSize.isEmpty ? "1 serving" : n.servingSize
-        logMethod  = "manual"
+        foodName     = n.name
+        baseCalories = n.calories
+        baseProteinG = n.proteinG
+        baseCarbsG   = n.carbsG
+        baseFatG     = n.fatG
+        servingSize  = n.servingSize.isEmpty ? "1 serving" : n.servingSize
+        servings     = 1.0
+        logMethod    = "manual"
     }
 
     // Tracks the name last set by applySuggestion so onChange doesn't re-trigger a search.
@@ -79,16 +101,17 @@ class LogFoodViewModel {
     func applySuggestion(_ s: FoodSuggestion) {
         searchTask?.cancel()
         lastAppliedName = s.name
-        foodName    = s.name
-        calories    = s.calories
-        proteinG    = s.proteinG
-        carbsG      = s.carbsG
-        fatG        = s.fatG
-        servingSize = "100g"
-        logMethod   = "manual"
-        suggestions = []
+        foodName     = s.name
+        baseCalories = s.calories
+        baseProteinG = s.proteinG
+        baseCarbsG   = s.carbsG
+        baseFatG     = s.fatG
+        servingSize  = "100g"
+        servings     = 1.0
+        logMethod    = "manual"
+        suggestions  = []
         showSuggestions = false
-        isSearching = false
+        isSearching  = false
     }
 
     func searchFood(_ query: String) {
@@ -149,13 +172,18 @@ class LogFoodViewModel {
         guard isValid else { return false }
         isLogging = true
         error = nil
+        // Persist totals (base × servings), not the per-serving base, so the
+        // daily log reflects what the user actually ate.
+        let loggedServingSize = servings == 1.0
+            ? servingSize
+            : "\(formatServings(servings)) × \(servingSize)"
         let entry = FoodEntry(
             mealType: mealType, foodName: foodName,
-            calories: calories ?? 0,
-            proteinG: proteinG ?? 0,
-            carbsG: carbsG ?? 0,
-            fatG: fatG ?? 0,
-            servingSize: servingSize, logMethod: logMethod
+            calories: totalCalories,
+            proteinG: totalProteinG,
+            carbsG:   totalCarbsG,
+            fatG:     totalFatG,
+            servingSize: loggedServingSize, logMethod: logMethod
         )
         defer { isLogging = false }
         do {
@@ -173,11 +201,19 @@ class LogFoodViewModel {
 
     func reset() {
         foodName = ""
-        calories = nil; proteinG = nil; carbsG = nil; fatG = nil
+        baseCalories = nil; baseProteinG = nil; baseCarbsG = nil; baseFatG = nil
+        servings = 1.0
         servingSize = "1 serving"
         suggestions = []
         showSuggestions = false
     }
+}
+
+// "1.5", "2", "0.5" — keeps it short for the logged servingSize string.
+private func formatServings(_ s: Double) -> String {
+    s.truncatingRemainder(dividingBy: 1) == 0
+        ? String(Int(s))
+        : String(format: "%.1f", s)
 }
 
 struct LogFoodView: View {
@@ -204,6 +240,10 @@ struct LogFoodView: View {
                     }
 
                     if vm.logMethod == "manual" {
+                        foodNameCard
+                        if vm.showSuggestions && !vm.suggestions.isEmpty {
+                            suggestionsCard
+                        }
                         manualForm
                     } else if vm.logMethod == "barcode" {
                         BarcodeScannerCard(vm: vm)
@@ -268,92 +308,235 @@ struct LogFoodView: View {
         }
     }
 
+    // ── Food name card ──────────────────────────────────────────────────────
+    private var foodNameCard: some View {
+        WCard {
+            formField("Food name") {
+                HStack {
+                    TextField("e.g. Chicken biryani", text: $vm.foodName)
+                        .focused($focusedField, equals: .foodName)
+                        .onChange(of: vm.foodName) { _, new in vm.searchFood(new) }
+                    if vm.isSearching {
+                        ProgressView().scaleEffect(0.7)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Suggestions card ────────────────────────────────────────────────────
+    // Sits *below* the food-name field (not within), styled as a clear,
+    // tappable list. Each row pre-fills the form's per-serving base values.
+    private var suggestionsCard: some View {
+        WCard(padding: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.brandGreen)
+                    Text("Suggestions")
+                        .font(.labelSm)
+                        .foregroundColor(.brandGreen)
+                    Spacer()
+                    Text("\(vm.suggestions.count)")
+                        .font(.labelSm)
+                        .foregroundColor(.textMuted)
+                }
+                .padding(.horizontal, Spacing.md)
+                .padding(.top, Spacing.sm)
+                .padding(.bottom, Spacing.xs)
+
+                Divider()
+
+                ForEach(Array(vm.suggestions.enumerated()), id: \.element.id) { i, s in
+                    Button {
+                        vm.applySuggestion(s)
+                        focusedField = nil
+                    } label: {
+                        HStack(spacing: Spacing.md) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(s.name)
+                                    .font(.labelMd)
+                                    .foregroundColor(.primary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Text("P \(Int(s.proteinG))g · C \(Int(s.carbsG))g · F \(Int(s.fatG))g · per 100g")
+                                    .font(.bodySm)
+                                    .foregroundColor(.textMuted)
+                            }
+                            Spacer(minLength: Spacing.sm)
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("\(s.calories)")
+                                    .font(.labelMd)
+                                    .foregroundColor(.brandGreen)
+                                Text("cal")
+                                    .font(.caption2)
+                                    .foregroundColor(.textMuted)
+                            }
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundColor(.brandGreen)
+                        }
+                        .padding(.horizontal, Spacing.md)
+                        .padding(.vertical, Spacing.sm)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if i < vm.suggestions.count - 1 {
+                        Divider().padding(.leading, Spacing.md)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Manual form (everything except food name) ───────────────────────────
     private var manualForm: some View {
         WCard {
             VStack(alignment: .leading, spacing: Spacing.md) {
-                VStack(alignment: .leading, spacing: 0) {
-                    formField("Food name") {
-                        HStack {
-                            TextField("e.g. Chicken rice bowl", text: $vm.foodName)
-                                .focused($focusedField, equals: .foodName)
-                                .onChange(of: vm.foodName) { _, new in vm.searchFood(new) }
-                                .onChange(of: focusedField) { _, field in
-                                    if field != .foodName { vm.showSuggestions = false }
-                                }
-                            if vm.isSearching {
-                                ProgressView().scaleEffect(0.7)
-                            }
-                        }
-                    }
-                    if vm.showSuggestions {
-                        VStack(spacing: 0) {
-                            ForEach(vm.suggestions) { s in
-                                Button {
-                                    vm.applySuggestion(s)
-                                    focusedField = nil
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(s.name)
-                                                .font(.bodySm)
-                                                .lineLimit(1)
-                                            Text("P \(Int(s.proteinG))g  C \(Int(s.carbsG))g  F \(Int(s.fatG))g  · per 100g")
-                                                .font(.labelSm)
-                                                .foregroundColor(.textMuted)
-                                        }
-                                        Spacer()
-                                        Text("\(s.calories) cal")
-                                            .font(.labelSm)
-                                            .foregroundColor(.brandGreen)
-                                    }
-                                    .padding(.horizontal, Spacing.sm)
-                                    .padding(.vertical, Spacing.xs)
-                                }
-                                .buttonStyle(.plain)
-                                if s.id != vm.suggestions.last?.id {
-                                    Divider().padding(.horizontal, Spacing.sm)
-                                }
-                            }
-                        }
-                        .background(Color.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.border, lineWidth: 0.5))
-                        .padding(.top, 2)
-                    }
-                }
                 formField("Meal type") {
                     Picker("", selection: $vm.mealType) {
                         ForEach(mealTypes, id: \.self) { Text($0.capitalized).tag($0) }
                     }
                     .pickerStyle(.segmented)
                 }
+
+                // Per-serving base values — shown smaller to make clear the
+                // bigger Total below is the actual loggable amount.
+                HStack {
+                    Text("Per serving")
+                        .font(.labelSm)
+                        .foregroundColor(.textMuted)
+                    Spacer()
+                }
+
                 HStack(spacing: Spacing.md) {
                     formField("Calories") {
-                        TextField("e.g. 450", value: $vm.calories, format: .number)
+                        TextField("e.g. 450", value: $vm.baseCalories, format: .number)
                             .keyboardType(.numberPad)
                             .focused($focusedField, equals: .calories)
                     }
-                    formField("Serving") {
+                    formField("Serving label") {
                         TextField("1 serving", text: $vm.servingSize)
                             .focused($focusedField, equals: .serving)
                     }
                 }
                 HStack(spacing: Spacing.md) {
                     formField("Protein (g)") {
-                        TextField("0", value: $vm.proteinG, format: .number)
+                        TextField("0", value: $vm.baseProteinG, format: .number)
                             .keyboardType(.decimalPad).focused($focusedField, equals: .protein)
                     }
                     formField("Carbs (g)") {
-                        TextField("0", value: $vm.carbsG, format: .number)
+                        TextField("0", value: $vm.baseCarbsG, format: .number)
                             .keyboardType(.decimalPad).focused($focusedField, equals: .carbs)
                     }
                     formField("Fat (g)") {
-                        TextField("0", value: $vm.fatG, format: .number)
+                        TextField("0", value: $vm.baseFatG, format: .number)
                             .keyboardType(.decimalPad).focused($focusedField, equals: .fat)
                     }
                 }
+
+                Divider().opacity(0.4)
+
+                servingsStepper
+                totalBanner
             }
         }
+    }
+
+    // ── Servings stepper ─────────────────────────────────────────────────────
+    // [-] [1.0] [+] — bumps in 0.5 steps (matches "I had half / one and a
+    // half" intuition). Tap-and-hold not supported intentionally; keeps
+    // accidental over-shoots low.
+    private var servingsStepper: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("How many servings?")
+                    .font(.labelMd)
+                Text("Adjusts the total below")
+                    .font(.bodySm)
+                    .foregroundColor(.textMuted)
+            }
+            Spacer()
+            HStack(spacing: 0) {
+                Button {
+                    vm.decrementServings()
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .foregroundColor(vm.servings <= 0.5 ? .textMuted : .brandGreen)
+                }
+                .disabled(vm.servings <= 0.5)
+                .buttonStyle(.plain)
+
+                Text(formatServings(vm.servings))
+                    .font(.numericMd)
+                    .foregroundColor(.primary)
+                    .frame(minWidth: 48)
+                    .contentTransition(.numericText())
+
+                Button {
+                    vm.incrementServings()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .foregroundColor(.brandGreen)
+                }
+                .buttonStyle(.plain)
+            }
+            .background(Color.brandGreenBg)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.brandGreen.opacity(0.25), lineWidth: 1))
+        }
+    }
+
+    // ── Total banner — large, brandGreen, updates live ───────────────────────
+    private var totalBanner: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Total")
+                    .font(.labelSm)
+                    .foregroundColor(.textMuted)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(vm.totalCalories)")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(.brandGreen)
+                        .contentTransition(.numericText())
+                    Text("cal")
+                        .font(.bodySm)
+                        .foregroundColor(.textMuted)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("P \(macroFormat(vm.totalProteinG))g")
+                    .font(.labelSm)
+                    .foregroundColor(.brandPurple)
+                    .contentTransition(.numericText())
+                HStack(spacing: Spacing.sm) {
+                    Text("C \(macroFormat(vm.totalCarbsG))g")
+                        .font(.labelSm)
+                        .foregroundColor(.brandGreen)
+                        .contentTransition(.numericText())
+                    Text("F \(macroFormat(vm.totalFatG))g")
+                        .font(.labelSm)
+                        .foregroundColor(.warning)
+                        .contentTransition(.numericText())
+                }
+            }
+        }
+        .padding(Spacing.md)
+        .background(Color.brandGreenBg.opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+        .animation(.easeOut(duration: 0.2), value: vm.servings)
+    }
+
+    private func macroFormat(_ v: Double) -> String {
+        v.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(v))
+            : String(format: "%.1f", v)
     }
 
     private func logMethodButton(icon: String, label: String, method: String) -> some View {
