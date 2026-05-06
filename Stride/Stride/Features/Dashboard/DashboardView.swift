@@ -7,7 +7,7 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            DashboardView()
+            DashboardView(onTapLog: { withAnimation { selectedTab = 2 } })
                 .tabItem { Label("Home", systemImage: "house.fill") }
                 .tag(0)
 
@@ -53,6 +53,11 @@ class DashboardViewModel {
     var weightHistory: [WeightEntry] = []
     var isLoading = true
 
+    // Throttle force-regen of the coach message so we don't burn Claude calls
+    // on every app open. Refresh at most once per cooldown window.
+    private static let coachRefreshCooldown: TimeInterval = 30 * 60 // 30 min
+    private static let coachRefreshKey = "lastCoachForceRefresh"
+
     func load() async {
         isLoading = true
 
@@ -64,11 +69,30 @@ class DashboardViewModel {
         isLoading = false
 
         // Secondary loads — run after UI is visible, order doesn't matter
-        async let coachTask   = try? APIClient.shared.getTodayCoachMessage()
+        async let coachTask   = try? APIClient.shared.getTodayCoachMessage(force: shouldForceCoachRefresh())
         async let weightsTask = try? APIClient.shared.getWeightHistory()
         coachMessage   = await coachTask
         let raw = await weightsTask ?? []
         weightHistory  = raw.sorted { $0.loggedAtDate < $1.loggedAtDate }
+    }
+
+    /// Refresh just the coach message — used when app re-enters foreground
+    /// without re-triggering the full dashboard load.
+    func refreshCoachIfStale() async {
+        guard shouldForceCoachRefresh() else { return }
+        if let msg = try? await APIClient.shared.getTodayCoachMessage(force: true) {
+            coachMessage = msg
+        }
+    }
+
+    private func shouldForceCoachRefresh() -> Bool {
+        let last = UserDefaults.standard.double(forKey: Self.coachRefreshKey)
+        let now = Date().timeIntervalSince1970
+        if now - last >= Self.coachRefreshCooldown {
+            UserDefaults.standard.set(now, forKey: Self.coachRefreshKey)
+            return true
+        }
+        return false
     }
 
     var caloriesEaten: Int { todayLog?.log?.caloriesEaten ?? 0 }
@@ -132,10 +156,15 @@ class DashboardViewModel {
 // ── Dashboard View ────────────────────────────────────────────────────────────
 
 struct DashboardView: View {
+    var onTapLog: (() -> Void)? = nil
     @State private var vm = DashboardViewModel()
+    @State private var hk = HealthKitManager.shared
     @State private var showProfile = false
     @State private var showOnboarding = false
     @State private var showCalorieDetail = false
+    @State private var heroPage = 0
+    @State private var selectedDate = Calendar.current.startOfDay(for: Date())
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -150,16 +179,40 @@ struct DashboardView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showProfile = true
-                    } label: {
-                        Image(systemName: "person.circle")
-                            .foregroundColor(.primary)
+                    HStack(spacing: Spacing.sm) {
+                        if vm.streakDays > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "flame.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.warning)
+                                Text("\(vm.streakDays)")
+                                    .font(.labelSm)
+                                    .foregroundColor(.primary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.warning.opacity(0.12))
+                            .clipShape(Capsule())
+                        }
+                        Button {
+                            showProfile = true
+                        } label: {
+                            Image(systemName: "person.circle")
+                                .foregroundColor(.primary)
+                        }
                     }
                 }
             }
         }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            await hk.requestAuthorization()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await vm.refreshCoachIfStale() }
+            }
+        }
         .sheet(isPresented: $showProfile) {
             NavigationStack { ProfileView() }
         }
@@ -184,6 +237,8 @@ struct DashboardView: View {
     private var dashboardContent: some View {
         ScrollView {
             VStack(spacing: Spacing.md) {
+
+                weekStrip
 
                 // Profile setup banner — shown when user skipped onboarding
                 if vm.profile == nil {
@@ -218,82 +273,48 @@ struct DashboardView: View {
                     .buttonStyle(.plain)
                 }
 
-                Button {
-                    showCalorieDetail = true
-                    Haptics.impact(.light)
-                } label: {
-                    WHeroCard {
-                        HStack(spacing: Spacing.lg) {
-                            WCalorieRing(eaten: vm.caloriesEaten, target: vm.calorieTarget)
-                                .frame(width: 100, height: 100)
-
-                            VStack(alignment: .leading, spacing: Spacing.sm) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(vm.calorieTarget) cal target")
-                                        .font(.labelMd)
-                                    HStack(spacing: Spacing.md) {
-                                        Text("Eaten: \(vm.caloriesEaten)")
-                                        Text("Left: \(vm.caloriesLeft)")
-                                    }
-                                    .font(.bodySm)
-                                    .foregroundColor(.textMuted)
-                                }
-                                HStack(spacing: Spacing.sm) {
-                                    Text("P \(Int(vm.protein))/\(vm.proteinTarget)g").font(.bodySm).foregroundColor(.brandPurple)
-                                    Text("C \(Int(vm.carbs))/\(vm.carbsTarget)g").font(.bodySm).foregroundColor(.brandGreen)
-                                    Text("F \(Int(vm.fat))/\(vm.fatTarget)g").font(.bodySm).foregroundColor(.warning)
-                                }
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.textMuted)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-
-                // Goal progress card
-                if vm.goalWeight > 0 && vm.startWeight > vm.goalWeight {
-                    goalProgressCard
-                }
+                heroPager
 
                 // Coach message
                 if let msg = vm.coachMessage {
                     WCoachBubble(message: msg.message)
                 }
 
-                // Streak badge
-                if vm.streakDays > 0 {
-                    HStack {
-                        Image(systemName: "flame.fill").foregroundColor(.warning)
-                        Text("\(vm.streakDays) day streak — keep it up!")
-                            .font(.labelSm)
-                    }
-                    .padding(.horizontal, Spacing.md)
-                    .padding(.vertical, Spacing.sm)
-                    .background(Color.warning.opacity(0.1))
-                    .clipShape(Capsule())
-                }
-
                 // Today’s food log — grouped by meal type
                 VStack(alignment: .leading, spacing: Spacing.sm) {
-                    WSectionHeader(
-                        eyebrow: "Today",
-                        title: "Food log",
-                        subtitle: "Long-press any entry to remove it."
-                    )
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Today's meals").font(.titleMd)
+                        Spacer()
+                        Text(todayDateLabel)
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                    }
+                    .padding(.horizontal, Spacing.xs)
 
                     if let entries = vm.todayLog?.entries, !entries.isEmpty {
                         ForEach(groupedEntries(entries), id: \.0) { mealType, mealEntries in
                             mealGroupCard(mealType: mealType, entries: mealEntries)
                         }
                     } else {
-                        Text("No food logged yet today")
-                            .font(.bodyMd)
-                            .foregroundColor(.textMuted)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(Spacing.lg)
+                        Button {
+                            Haptics.impact(.light)
+                            onTapLog?()
+                        } label: {
+                            VStack(spacing: Spacing.sm) {
+                                Image(systemName: "fork.knife.circle.fill")
+                                    .font(.system(size: 36))
+                                    .foregroundColor(.brandGreen.opacity(0.6))
+                                Text("Tap to log your first meal")
+                                    .font(.bodyMd)
+                                    .foregroundColor(.textMuted)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Spacing.xl)
+                            .background(Color.cardSurface.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.md))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -302,6 +323,364 @@ struct DashboardView: View {
         }
         .background(Color.clear)
         .refreshable { await vm.load() }
+    }
+
+    private var todayDateLabel: String {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f.string(from: Date())
+    }
+
+    // ── Week strip — tappable, viewing past dates pulls HealthKit history ──
+    private var weekStrip: some View {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let weekday = cal.component(.weekday, from: today)
+        let startOfWeek = cal.date(byAdding: .day, value: -(weekday - cal.firstWeekday), to: today) ?? today
+        let days: [Date] = (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: startOfWeek) }
+
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "EEE"
+
+        return HStack(spacing: Spacing.xs) {
+            ForEach(days, id: \.self) { d in
+                let isSelected = cal.isDate(d, inSameDayAs: selectedDate)
+                let dayNum = cal.component(.day, from: d)
+                let isToday = cal.isDate(d, inSameDayAs: today)
+                let isPast = d < today && !isToday
+                let isFuture = d > today && !isToday
+
+                Button {
+                    Haptics.selection()
+                    selectedDate = cal.startOfDay(for: d)
+                    Task { await hk.loadDate(selectedDate) }
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(dayFmt.string(from: d))
+                            .font(.caption2)
+                            .foregroundColor(
+                                isSelected ? .primary :
+                                isFuture   ? .textMuted.opacity(0.5) :
+                                             .textMuted
+                            )
+                        ZStack {
+                            // Fill: gradient for selected, empty otherwise
+                            Circle()
+                                .fill(
+                                    isSelected
+                                    ? AnyShapeStyle(LinearGradient(colors: [.brandGreen, .brandPurple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                    : AnyShapeStyle(Color.clear)
+                                )
+                                .frame(width: 34, height: 34)
+
+                            // Border: varies by day type
+                            if !isSelected {
+                                if isToday {
+                                    // Today — solid thick green ring
+                                    Circle()
+                                        .stroke(Color.brandGreen, lineWidth: 2.5)
+                                        .frame(width: 34, height: 34)
+                                } else if isPast {
+                                    // Past — solid thin gray ring
+                                    Circle()
+                                        .stroke(Color.border, lineWidth: 1)
+                                        .frame(width: 34, height: 34)
+                                } else {
+                                    // Future — dashed ring, dimmed
+                                    Circle()
+                                        .stroke(Color.border.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                                        .frame(width: 34, height: 34)
+                                }
+                            }
+
+                            Text("\(dayNum)")
+                                .font(.labelSm)
+                                .foregroundColor(
+                                    isSelected ? .white :
+                                    isToday    ? .brandGreen :
+                                    isFuture   ? .textMuted.opacity(0.5) :
+                                                 .primary
+                                )
+                                .fontWeight(isToday && !isSelected ? .bold : .regular)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var isViewingToday: Bool {
+        Calendar.current.isDateInToday(selectedDate)
+    }
+
+    private var selectedDateLabel: String {
+        let f = DateFormatter()
+        if isViewingToday { return "Today" }
+        f.dateFormat = "EEEE, MMM d"
+        return f.string(from: selectedDate)
+    }
+
+    // ── Hero pager — 3 swipeable pages with dot indicator ───────────────────
+
+    private var heroPager: some View {
+        VStack(spacing: Spacing.sm) {
+            TabView(selection: $heroPage) {
+                heroFuelPage
+                    .padding(.horizontal, 2)
+                    .tag(0)
+                heroActivityPage
+                    .padding(.horizontal, 2)
+                    .tag(1)
+                heroProgressPage
+                    .padding(.horizontal, 2)
+                    .tag(2)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 230)
+
+            HStack(spacing: 6) {
+                ForEach(0..<3) { i in
+                    Capsule()
+                        .fill(heroPage == i ? Color.brandGreen : Color.border)
+                        .frame(width: heroPage == i ? 18 : 6, height: 6)
+                        .animation(.spring(response: 0.4), value: heroPage)
+                }
+            }
+        }
+    }
+
+    // Page 1 — Fuel: calories + macro mini-bars
+    private var heroFuelPage: some View {
+        Button {
+            showCalorieDetail = true
+            Haptics.impact(.light)
+        } label: {
+            WGlassCard(height: 220) {
+                VStack(alignment: .leading, spacing: Spacing.md) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(vm.caloriesEaten > vm.calorieTarget ? "\(vm.caloriesEaten - vm.calorieTarget)" : "\(vm.caloriesLeft)")
+                                .font(.system(size: 52, weight: .bold, design: .rounded))
+                                .foregroundColor(vm.caloriesEaten > vm.calorieTarget ? .danger : .primary)
+                                .contentTransition(.numericText())
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            Text(vm.caloriesEaten > vm.calorieTarget ? "Calories over target" : "Calories left today")
+                                .font(.labelMd)
+                                .foregroundColor(.textMuted)
+                        }
+                        Spacer()
+                        ZStack {
+                            Circle()
+                                .stroke(Color.brandGreen.opacity(0.18), lineWidth: 6)
+                            Circle()
+                                .trim(from: 0, to: min(Double(vm.caloriesEaten) / Double(max(vm.calorieTarget, 1)), 1))
+                                .stroke(
+                                    AngularGradient(
+                                        colors: [.brandGreen, .brandPurple],
+                                        center: .center,
+                                        startAngle: .degrees(-90),
+                                        endAngle: .degrees(270)
+                                    ),
+                                    style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                                )
+                                .rotationEffect(.degrees(-90))
+                            Image(systemName: "flame.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.brandGreen)
+                        }
+                        .frame(width: 64, height: 64)
+                    }
+
+                    Divider().opacity(0.35)
+
+                    VStack(spacing: 10) {
+                        WMacroBar(label: "Protein", eaten: vm.protein, target: Double(vm.proteinTarget), color: .brandPurple)
+                        WMacroBar(label: "Carbs",   eaten: vm.carbs,   target: Double(vm.carbsTarget),   color: .brandGreen)
+                        WMacroBar(label: "Fat",     eaten: vm.fat,     target: Double(vm.fatTarget),     color: .warning)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // Page 2 — Move: dual-ring activity panel (Stride signature)
+    private var heroActivityPage: some View {
+        let stepsGoal = 10000.0
+        let calGoal = 500.0
+        let stepProg = min(Double(hk.activity.steps) / stepsGoal, 1)
+        let calProg  = min(Double(hk.activity.activeCalories) / calGoal, 1)
+
+        return WGlassCard(height: 220) {
+            HStack(alignment: .center, spacing: Spacing.md) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.brandGreen.opacity(0.18), lineWidth: 8)
+                        .frame(width: 130, height: 130)
+                    Circle()
+                        .trim(from: 0, to: stepProg)
+                        .stroke(
+                            AngularGradient(colors: [.brandGreen, .accentMint], center: .center, startAngle: .degrees(-90), endAngle: .degrees(270)),
+                            style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 130, height: 130)
+                        .animation(.spring(response: 0.7), value: stepProg)
+
+                    Circle()
+                        .stroke(Color.warning.opacity(0.18), lineWidth: 8)
+                        .frame(width: 96, height: 96)
+                    Circle()
+                        .trim(from: 0, to: calProg)
+                        .stroke(
+                            AngularGradient(colors: [.warning, .accentPeach], center: .center, startAngle: .degrees(-90), endAngle: .degrees(270)),
+                            style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 96, height: 96)
+                        .animation(.spring(response: 0.7), value: calProg)
+
+                    VStack(spacing: -2) {
+                        Image(systemName: "figure.run")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(LinearGradient(colors: [.brandGreen, .brandPurple], startPoint: .top, endPoint: .bottom))
+                    }
+                }
+                .frame(width: 140)
+
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    activityRingLabel(
+                        dot: .brandGreen,
+                        title: "\(hk.activity.steps.formatted()) steps",
+                        sub: "\(Int(stepProg * 100))% of \(Int(stepsGoal/1000))k goal"
+                    )
+                    activityRingLabel(
+                        dot: .warning,
+                        title: "\(hk.activity.activeCalories) kcal",
+                        sub: "active calories burned"
+                    )
+                    if let w = hk.activity.workouts.first {
+                        activityRingLabel(
+                            dot: .brandPurple,
+                            title: w.name,
+                            sub: "\(w.durationMinutes) min · \(w.calories) kcal"
+                        )
+                    } else {
+                        activityRingLabel(
+                            dot: Color.border,
+                            title: "No workout logged",
+                            sub: isViewingToday ? "Time to move?" : "for this day"
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func activityRingLabel(dot: Color, title: String, sub: String) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(dot).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(.labelMd)
+                Text(sub).font(.caption2).foregroundColor(.textMuted)
+            }
+        }
+    }
+
+    // Page 3 — Achievements: weight goal arc + streak/days/wins chips
+    private var heroProgressPage: some View {
+        WGlassCard(height: 220) {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                HStack(alignment: .center, spacing: Spacing.lg) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.border.opacity(0.4), lineWidth: 9)
+                            .frame(width: 96, height: 96)
+                        Circle()
+                            .trim(from: 0, to: vm.goalProgressFraction)
+                            .stroke(
+                                AngularGradient(
+                                    colors: [.brandGreen, .brandPurple, .brandGreen],
+                                    center: .center,
+                                    startAngle: .degrees(-90),
+                                    endAngle: .degrees(270)
+                                ),
+                                style: StrokeStyle(lineWidth: 9, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 96, height: 96)
+                            .animation(.spring(response: 0.7), value: vm.goalProgressFraction)
+                        VStack(spacing: 0) {
+                            Text(String(format: "%.0f%%", vm.goalProgressFraction * 100))
+                                .font(.system(size: 22, weight: .bold, design: .rounded))
+                            Text("to goal")
+                                .font(.caption2)
+                                .foregroundColor(.textMuted)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        if vm.goalWeight > 0 {
+                            HStack(alignment: .lastTextBaseline, spacing: 4) {
+                                Text(String(format: "%.1f", vm.kgRemaining))
+                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                Text("kg to go")
+                                    .font(.bodySm)
+                                    .foregroundColor(.textMuted)
+                            }
+                            HStack {
+                                Text(String(format: "%.1f", vm.currentWeight))
+                                    .font(.caption2).foregroundColor(.textMuted)
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.textMuted)
+                                Text(String(format: "%.1f kg", vm.goalWeight))
+                                    .font(.caption2).foregroundColor(.brandGreen)
+                            }
+                        } else {
+                            Text("Set a weight goal in your profile")
+                                .font(.bodySm).foregroundColor(.textMuted)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Divider().opacity(0.35)
+
+                HStack(spacing: Spacing.sm) {
+                    achievementChip(icon: "flame.fill", value: "\(vm.streakDays)", label: "streak", color: .warning)
+                    achievementChip(icon: "checkmark.seal.fill", value: "\(vm.todayLog?.entries?.count ?? 0)", label: "logged", color: .brandGreen)
+                    achievementChip(icon: "sparkles", value: "AI", label: "coach on", color: .brandPurple)
+                }
+            }
+        }
+    }
+
+    private func achievementChip(icon: String, value: String, label: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(value)
+                    .font(.labelMd)
+            }
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.textMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.1))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.sm)
+                .stroke(color.opacity(0.25), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
     }
 
     private func foodEntryRow(_ entry: FoodEntry) -> some View {
