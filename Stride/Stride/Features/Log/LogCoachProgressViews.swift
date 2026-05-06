@@ -64,7 +64,10 @@ class LogFoodViewModel {
     var suggestions: [FoodSuggestion] = []
     var showSuggestions = false
     var isSearching = false
+    var noResults = false  // True when search completed but returned nothing — drives empty-state UI.
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var searchSeq: UInt64 = 0  // Monotonic ID to discard stale responses.
+    @ObservationIgnored private var lastQueriedNorm = ""
 
     // Live totals = base × servings. These are what gets logged.
     var totalCalories: Int { Int((Double(baseCalories ?? 0) * servings).rounded()) }
@@ -121,28 +124,54 @@ class LogFoodViewModel {
             return
         }
         searchTask?.cancel()
-        guard query.count >= 2 else {
+        let norm = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard norm.count >= 2 else {
             suggestions = []
             showSuggestions = false
             isSearching = false
+            noResults = false
+            lastQueriedNorm = ""
             return
         }
+        // Skip the network if the user retyped the same query (e.g. cursor moves).
+        if norm == lastQueriedNorm && (!suggestions.isEmpty || noResults) {
+            showSuggestions = true
+            return
+        }
+
+        searchSeq &+= 1
+        let mySeq = searchSeq
         isSearching = true
-        searchTask = Task {
-            try? await Task.sleep(nanoseconds: 400_000_000)
+        showSuggestions = true
+        noResults = false
+
+        searchTask = Task { [weak self] in
+            // 250ms debounce — short enough to feel snappy, long enough to skip
+            // mid-typing characters.
+            try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
 
-            var comps = URLComponents(string: "https://world.openfoodfacts.org/cgi/search.pl")!
+            // Open Food Facts v2 search — much faster and more reliable than the
+            // legacy cgi/search.pl endpoint. User-Agent is REQUIRED by OFF policy
+            // to avoid IP-level rate limiting on anonymous traffic.
+            var comps = URLComponents(string: "https://world.openfoodfacts.org/api/v2/search")!
             comps.queryItems = [
                 URLQueryItem(name: "search_terms", value: query),
-                URLQueryItem(name: "json",         value: "1"),
-                URLQueryItem(name: "page_size",    value: "5"),
                 URLQueryItem(name: "fields",       value: "product_name,nutriments"),
+                URLQueryItem(name: "page_size",    value: "8"),
+                URLQueryItem(name: "sort_by",      value: "popularity_key"),
             ]
-            guard let url = comps.url else { isSearching = false; return }
+            guard let url = comps.url else {
+                await MainActor.run { self?.finishSearch(mySeq, results: [], norm: norm) }
+                return
+            }
+
+            var req = URLRequest(url: url, timeoutInterval: 6)
+            req.setValue("Stride/1.0 (iOS; chandra.sk59@gmail.com)", forHTTPHeaderField: "User-Agent")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
 
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let (data, _) = try await URLSession.shared.data(for: req)
                 guard !Task.isCancelled else { return }
                 let response = try JSONDecoder().decode(OFFResponse.self, from: data)
                 let results: [FoodSuggestion] = response.products.compactMap { p in
@@ -158,14 +187,22 @@ class LogFoodViewModel {
                         fatG: n.fat100g ?? 0
                     )
                 }
-                suggestions = results
-                showSuggestions = !results.isEmpty
+                await MainActor.run { self?.finishSearch(mySeq, results: results, norm: norm) }
             } catch {
-                suggestions = []
-                showSuggestions = false
+                await MainActor.run { self?.finishSearch(mySeq, results: [], norm: norm) }
             }
-            isSearching = false
         }
+    }
+
+    /// Apply search results only if no newer search has been kicked off. Without
+    /// this guard, a slow earlier response could clobber a faster newer one.
+    private func finishSearch(_ seq: UInt64, results: [FoodSuggestion], norm: String) {
+        guard seq == searchSeq else { return }
+        suggestions = results
+        showSuggestions = true
+        noResults = results.isEmpty
+        isSearching = false
+        lastQueriedNorm = norm
     }
 
     func logFood() async -> Bool {
@@ -243,6 +280,8 @@ struct LogFoodView: View {
                         foodNameCard
                         if vm.showSuggestions && !vm.suggestions.isEmpty {
                             suggestionsCard
+                        } else if vm.showSuggestions && vm.noResults && !vm.isSearching {
+                            noSuggestionsCard
                         }
                         manualForm
                     } else if vm.logMethod == "barcode" {
@@ -321,6 +360,27 @@ struct LogFoodView: View {
                     }
                 }
             }
+        }
+    }
+
+    // ── Empty-state card (no suggestions returned) ──────────────────────────
+    private var noSuggestionsCard: some View {
+        WCard(padding: 0) {
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundColor(.textMuted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("No matches found")
+                        .font(.labelMd)
+                        .foregroundColor(.primary)
+                    Text("Fill in the values below manually.")
+                        .font(.bodySm)
+                        .foregroundColor(.textMuted)
+                }
+                Spacer()
+            }
+            .padding(Spacing.md)
         }
     }
 
@@ -410,16 +470,10 @@ struct LogFoodView: View {
                     Spacer()
                 }
 
-                HStack(spacing: Spacing.md) {
-                    formField("Calories") {
-                        TextField("e.g. 450", value: $vm.baseCalories, format: .number)
-                            .keyboardType(.numberPad)
-                            .focused($focusedField, equals: .calories)
-                    }
-                    formField("Serving label") {
-                        TextField("1 serving", text: $vm.servingSize)
-                            .focused($focusedField, equals: .serving)
-                    }
+                formField("Calories") {
+                    TextField("e.g. 450", value: $vm.baseCalories, format: .number)
+                        .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .calories)
                 }
                 HStack(spacing: Spacing.md) {
                     formField("Protein (g)") {
@@ -439,8 +493,31 @@ struct LogFoodView: View {
                 Divider().opacity(0.4)
 
                 servingsStepper
+                portionField
                 totalBanner
             }
+        }
+    }
+
+    // ── Portion descriptor — paired with servings stepper ───────────────────
+    // What "1 serving" actually is (e.g. "100g", "1 cup", "1 medium"). Used
+    // for the audit trail in the logged entry; doesn't affect math.
+    private var portionField: some View {
+        HStack(spacing: Spacing.sm) {
+            Text("of")
+                .font(.bodySm)
+                .foregroundColor(.textMuted)
+            TextField("1 serving", text: $vm.servingSize)
+                .focused($focusedField, equals: .serving)
+                .font(.bodyMd)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, 6)
+                .background(Color.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            Text("portion")
+                .font(.bodySm)
+                .foregroundColor(.textMuted)
+            Spacer()
         }
     }
 
@@ -453,7 +530,7 @@ struct LogFoodView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("How many servings?")
                     .font(.labelMd)
-                Text("Adjusts the total below")
+                Text("Updates the total below")
                     .font(.bodySm)
                     .foregroundColor(.textMuted)
             }
