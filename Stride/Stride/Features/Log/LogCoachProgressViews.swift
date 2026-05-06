@@ -65,6 +65,7 @@ class LogFoodViewModel {
     var showSuggestions = false
     var isSearching = false
     var noResults = false  // True when search completed but returned nothing — drives empty-state UI.
+    var isEstimatingByAI = false  // True while POST /food/analyze-name is in flight.
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var searchSeq: UInt64 = 0  // Monotonic ID to discard stale responses.
     @ObservationIgnored private var lastQueriedNorm = ""
@@ -158,7 +159,7 @@ class LogFoodViewModel {
             comps.queryItems = [
                 URLQueryItem(name: "search_terms", value: query),
                 URLQueryItem(name: "fields",       value: "product_name,nutriments"),
-                URLQueryItem(name: "page_size",    value: "8"),
+                URLQueryItem(name: "page_size",    value: "20"),
                 URLQueryItem(name: "sort_by",      value: "popularity_key"),
             ]
             guard let url = comps.url else {
@@ -192,6 +193,28 @@ class LogFoodViewModel {
                 await MainActor.run { self?.finishSearch(mySeq, results: [], norm: norm) }
             }
         }
+    }
+
+    /// Ask Claude to estimate per-serving nutrition for the typed food name.
+    /// Used when OFF has no match (cooked / ethnic dishes) or as a fallback the
+    /// user can opt into instead of typing values manually.
+    func estimateByAI() async {
+        let q = foodName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2 else { return }
+        isEstimatingByAI = true
+        error = nil
+        do {
+            let n = try await APIClient.shared.analyzeName(q)
+            applyNutrition(n)
+            suggestions = []
+            showSuggestions = false
+            noResults = false
+            Haptics.notify(.success)
+        } catch {
+            self.error = "Couldn't estimate. Fill in manually."
+            Haptics.notify(.error)
+        }
+        isEstimatingByAI = false
     }
 
     /// Apply search results only if no newer search has been kicked off. Without
@@ -280,8 +303,15 @@ struct LogFoodView: View {
                         foodNameCard
                         if vm.showSuggestions && !vm.suggestions.isEmpty {
                             suggestionsCard
+                            // Offer the AI estimate as an additional option even
+                            // when OFF returned matches — many of those are
+                            // niche branded products that may not be what the
+                            // user actually ate.
+                            aiEstimateCard(isPrimary: false)
                         } else if vm.showSuggestions && vm.noResults && !vm.isSearching {
-                            noSuggestionsCard
+                            // No OFF matches — promote the AI estimate as the
+                            // primary path forward.
+                            aiEstimateCard(isPrimary: true)
                         }
                         manualForm
                     } else if vm.logMethod == "barcode" {
@@ -363,25 +393,73 @@ struct LogFoodView: View {
         }
     }
 
-    // ── Empty-state card (no suggestions returned) ──────────────────────────
-    private var noSuggestionsCard: some View {
-        WCard(padding: 0) {
-            HStack(spacing: Spacing.sm) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14))
-                    .foregroundColor(.textMuted)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("No matches found")
-                        .font(.labelMd)
-                        .foregroundColor(.primary)
-                    Text("Fill in the values below manually.")
-                        .font(.bodySm)
-                        .foregroundColor(.textMuted)
+    // ── AI estimate card ────────────────────────────────────────────────────
+    // Single tap → calls Claude → fills the form. Two visual modes:
+    //   isPrimary=true:  Big card, shown when OFF returned no matches.
+    //                    Mentions explicitly there were no matches.
+    //   isPrimary=false: Compact strip below OFF suggestions as an alternative.
+    private func aiEstimateCard(isPrimary: Bool) -> some View {
+        let trimmedName = vm.foodName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Button {
+            Task { await vm.estimateByAI() }
+            focusedField = nil
+        } label: {
+            HStack(spacing: Spacing.md) {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: [.brandGreen, .brandPurple],
+                                             startPoint: .topLeading,
+                                             endPoint: .bottomTrailing))
+                        .frame(width: isPrimary ? 44 : 36, height: isPrimary ? 44 : 36)
+                    if vm.isEstimatingByAI {
+                        ProgressView().tint(.white).scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: isPrimary ? 18 : 14, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
                 }
-                Spacer()
+                VStack(alignment: .leading, spacing: 2) {
+                    if isPrimary {
+                        Text("No matches found")
+                            .font(.labelSm)
+                            .foregroundColor(.textMuted)
+                        Text("Estimate \"\(trimmedName)\" with AI")
+                            .font(.titleSm)
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    } else {
+                        Text("Or estimate with AI")
+                            .font(.labelMd)
+                            .foregroundColor(.primary)
+                        Text("Better for home-cooked or ethnic dishes")
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                    }
+                }
+                Spacer(minLength: Spacing.sm)
+                Image(systemName: vm.isEstimatingByAI ? "ellipsis" : "arrow.right.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundColor(.brandGreen)
             }
             .padding(Spacing.md)
+            .background(
+                LinearGradient(
+                    colors: [Color.brandGreenBg.opacity(0.9), Color.brandPurpleBg.opacity(0.6)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.md)
+                    .stroke(Color.brandGreen.opacity(0.3), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Radius.md))
         }
+        .buttonStyle(.plain)
+        .disabled(vm.isEstimatingByAI || trimmedName.isEmpty)
+        .opacity(vm.isEstimatingByAI ? 0.85 : 1)
     }
 
     // ── Suggestions card ────────────────────────────────────────────────────
