@@ -294,6 +294,192 @@ struct WCalorieRing: View {
     }
 }
 
+// ── WGlassCard — frosted gradient card (Stride signature) ───────────────────
+
+struct WGlassCard<Content: View>: View {
+    var height: CGFloat? = nil
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(Spacing.lg)
+            .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color.cardSurface.opacity(0.95),
+                        Color.brandGreenBg.opacity(0.55),
+                        Color.brandPurpleBg.opacity(0.35)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.lg)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.brandGreen.opacity(0.35), Color.brandPurple.opacity(0.25)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Radius.lg))
+            .cardShadow()
+    }
+}
+
+// ── WMacroBar — horizontal labeled progress bar ─────────────────────────────
+
+struct WMacroBar: View {
+    let label: String
+    let eaten: Double
+    let target: Double
+    let color: Color
+
+    private var progress: Double {
+        guard target > 0 else { return 0 }
+        return min(eaten / target, 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundColor(.textMuted)
+                Spacer()
+                Text("\(Int(eaten))/\(Int(target))g")
+                    .font(.caption2)
+                    .foregroundColor(.primary)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(color.opacity(0.18))
+                        .frame(height: 6)
+                    Capsule()
+                        .fill(color)
+                        .frame(width: geo.size.width * progress, height: 6)
+                        .animation(.spring(response: 0.7, dampingFraction: 0.85), value: progress)
+                }
+            }
+            .frame(height: 6)
+        }
+    }
+}
+
+// ── WHeroCalorieCard — big "calories left" hero with side ring ───────────────
+
+struct WHeroCalorieCard: View {
+    let eaten: Int
+    let target: Int
+
+    private var remaining: Int { max(target - eaten, 0) }
+    private var over: Int { max(eaten - target, 0) }
+    private var isOver: Bool { eaten > target }
+    private var progress: Double {
+        guard target > 0 else { return 0 }
+        return min(Double(eaten) / Double(target), 1)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Spacing.md) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(isOver ? over : remaining)")
+                    .font(.system(size: 56, weight: .bold, design: .rounded))
+                    .foregroundColor(isOver ? .danger : .primary)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(isOver ? "Calories over" : "Calories left")
+                    .font(.labelMd)
+                    .foregroundColor(.textMuted)
+            }
+            Spacer()
+            ZStack {
+                Circle()
+                    .stroke(Color.border.opacity(0.35), lineWidth: 8)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        isOver ? Color.danger : Color.brandGreen,
+                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .animation(.spring(response: 0.7, dampingFraction: 0.85), value: progress)
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(isOver ? .danger : .primary)
+            }
+            .frame(width: 84, height: 84)
+        }
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity)
+        .background(Color.cardSurface)
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.md)
+                .stroke(Color.border.opacity(0.5), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Radius.md))
+    }
+}
+
+// ── WMacroLeftCard — single macro tile with circular progress ────────────────
+
+struct WMacroLeftCard: View {
+    let label: String
+    let eaten: Double
+    let target: Double
+    let icon: String
+    let color: Color
+
+    private var remaining: Int { max(Int(target) - Int(eaten), 0) }
+    private var progress: Double {
+        guard target > 0 else { return 0 }
+        return min(eaten / target, 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(remaining)g")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                    .contentTransition(.numericText())
+                Text("\(label) left")
+                    .font(.bodySm)
+                    .foregroundColor(.textMuted)
+            }
+            HStack {
+                Spacer()
+                ZStack {
+                    Circle()
+                        .stroke(Color.border.opacity(0.35), lineWidth: 5)
+                    Circle()
+                        .trim(from: 0, to: progress)
+                        .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(.spring(response: 0.7, dampingFraction: 0.85), value: progress)
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(color)
+                }
+                .frame(width: 44, height: 44)
+            }
+        }
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 130)
+        .background(Color.cardSurface)
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.md)
+                .stroke(Color.border.opacity(0.5), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Radius.md))
+    }
+}
+
 // ── WMacroRow — protein/carbs/fat bar ────────────────────────────────────────
 
 struct WMacroRow: View {
