@@ -264,8 +264,8 @@ extension APIClient {
     }
 
     // Coach
-    func getTodayCoachMessage() async throws -> CoachMessage {
-        try await get("/api/coach/today")
+    func getTodayCoachMessage(force: Bool = false) async throws -> CoachMessage {
+        try await get("/api/coach/today" + (force ? "?force=true" : ""))
     }
 
     // Food lookup
