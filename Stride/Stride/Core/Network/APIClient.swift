@@ -220,6 +220,10 @@ extension APIClient {
         return try await post("/api/meals/regenerate", body: Empty())
     }
 
+    func getGroceryList(force: Bool = false) async throws -> GroceryList {
+        try await get("/api/meals/grocery-list" + (force ? "?force=true" : ""))
+    }
+
     func swapMeal(mealPlanID: String, day: String, meal: Meal, filter: String) async throws -> [Meal] {
         struct Body: Encodable {
             let mealPlanId: String
@@ -276,6 +280,11 @@ extension APIClient {
     func analyzePhoto(imageBase64: String) async throws -> FoodNutrition {
         struct Body: Encodable { let imageBase64: String }
         return try await post("/api/food/analyze-photo", body: Body(imageBase64: imageBase64))
+    }
+
+    func analyzeName(_ name: String) async throws -> FoodNutrition {
+        struct Body: Encodable { let name: String }
+        return try await post("/api/food/analyze-name", body: Body(name: name))
     }
 
     // Device token
