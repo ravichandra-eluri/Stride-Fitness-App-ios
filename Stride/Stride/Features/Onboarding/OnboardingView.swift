@@ -12,8 +12,8 @@ class OnboardingViewModel {
     var name: String = ""
     var age: Int = 30
     var gender: String = "male"
-    var heightCm: Int = 175
-    var currentWeight: Double = 80
+    var heightCm: Int = 180
+    var currentWeight: Double = 78
     var goalWeight: Double = 70
     var timelineMonths: Int = 6
     var activityLevel: String = "light"
@@ -312,7 +312,7 @@ struct OnboardingBodyScreen: View {
                 WCard {
                     VStack(alignment: .leading, spacing: Spacing.md) {
                         formField("Your name") {
-                            TextField("e.g. Ravi", text: $vm.name)
+                            TextField("First name", text: $vm.name)
                                 .textContentType(.givenName)
                         }
 
