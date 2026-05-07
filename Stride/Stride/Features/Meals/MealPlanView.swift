@@ -144,6 +144,18 @@ struct MealPlanView: View {
             }
             .navigationTitle("Meal plan")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                if vm.plan != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        NavigationLink {
+                            GroceryListView()
+                        } label: {
+                            Image(systemName: "basket")
+                                .foregroundColor(.brandGreen)
+                        }
+                    }
+                }
+            }
         }
         .task { await vm.load() }
         .sheet(isPresented: $showOnboarding) {

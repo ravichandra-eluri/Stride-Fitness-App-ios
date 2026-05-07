@@ -113,6 +113,26 @@ struct MealSwapResponse: Decodable {
     let alternatives: [Meal]
 }
 
+// ── Grocery list ──────────────────────────────────────────────────────────────
+
+struct GroceryItem: Codable, Identifiable, Hashable {
+    var id: String { name }
+    let name: String
+    let quantity: String
+}
+
+struct GroceryCategory: Codable, Identifiable, Hashable {
+    var id: String { name }
+    let name: String
+    let items: [GroceryItem]
+}
+
+struct GroceryList: Codable {
+    let mealPlanId: String
+    let week: String
+    let categories: [GroceryCategory]
+}
+
 // ── Daily log ─────────────────────────────────────────────────────────────────
 
 struct DailyLog: Decodable {
