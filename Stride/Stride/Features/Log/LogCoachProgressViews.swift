@@ -952,13 +952,14 @@ struct CoachView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    WLoadingView(message: "Loading your coach...")
+                    coachSkeleton
                 } else if let msg = message {
                     coachContent(msg)
                 } else {
                     emptyCoachView
                 }
             }
+            .tabBackground(.tintCoach)
             .navigationTitle("Your coach")
             .navigationBarTitleDisplayMode(.large)
         }
@@ -975,13 +976,25 @@ struct CoachView: View {
         isLoading = false
     }
 
+    private var coachSkeleton: some View {
+        ScrollView {
+            VStack(spacing: Spacing.md) {
+                WSkeletonCard(lines: 4)
+                WSkeletonCard(lines: 3)
+                WSkeletonCard(lines: 1)
+            }
+            .padding(Spacing.md)
+        }
+    }
+
     private var emptyCoachView: some View {
         WEmptyState(
             icon: "bubble.left.fill",
             title: "No coach message yet",
             subtitle: "Your daily coaching message will appear here each morning.",
             ctaTitle: "Refresh",
-            ctaAction: { Task { await load() } }
+            ctaAction: { Task { await load() } },
+            tintColors: [.brandPurple, .brandGreen]
         )
     }
 
@@ -1021,7 +1034,6 @@ struct CoachView: View {
             }
             .padding(Spacing.md)
         }
-        .background(Color.appBackground)
     }
 }
 
@@ -1091,11 +1103,12 @@ struct ProgressTrackingView: View {
         NavigationStack {
             Group {
                 if vm.isLoading {
-                    WLoadingView()
+                    progressSkeleton
                 } else {
                     progressContent
                 }
             }
+            .tabBackground(.tintProgress)
             .navigationTitle("Progress")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -1117,6 +1130,21 @@ struct ProgressTrackingView: View {
         .sheet(isPresented: $vm.showingWeightLogger) {
             weightLogSheet
                 .presentationDetents([.height(260)])
+        }
+    }
+
+    private var progressSkeleton: some View {
+        ScrollView {
+            VStack(spacing: Spacing.md) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Spacing.sm) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        WCard { WSkeleton(height: 48, cornerRadius: 8) }
+                    }
+                }
+                WSkeletonCard(lines: 4)
+                WSkeletonCard(lines: 5)
+            }
+            .padding(Spacing.md)
         }
     }
 
