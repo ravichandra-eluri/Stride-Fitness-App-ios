@@ -249,8 +249,11 @@ struct DashboardView: View {
         if vm.goalProgressFraction >= 0.5 && vm.goalWeight > 0 {
             return "Halfway to your goal"
         }
-        if vm.caloriesEaten == 0 && Calendar.current.component(.hour, from: Date()) > 9 {
-            return "Log breakfast to start the day"
+        if vm.caloriesEaten == 0 {
+            // Time-aware nudge instead of hard-coded breakfast — copy adapts
+            // to the user's local meal window.
+            let mealTime = MealTime.current()
+            if mealTime != .late { return mealTime.logPrompt }
         }
         if vm.todayLog?.entries?.isEmpty == false {
             return "Nice start, keep going"

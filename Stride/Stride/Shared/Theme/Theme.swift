@@ -115,6 +115,46 @@ extension View {
     }
 }
 
+// ── Meal time helpers ────────────────────────────────────────────────────────
+// Time-of-day → which meal the user is most likely about to log. Drives the
+// adaptive copy on Home ("Log breakfast to start the day") and Coach
+// ("Focus on: Lunch") so prompts stay relevant regardless of when the
+// coach message was generated server-side.
+
+enum MealTime: String {
+    case breakfast, lunch, dinner, late
+
+    /// Resolves from the device's local hour.
+    static func current(at date: Date = Date()) -> MealTime {
+        let hour = Calendar.current.component(.hour, from: date)
+        switch hour {
+        case 4..<10:  return .breakfast
+        case 10..<15: return .lunch
+        case 15..<21: return .dinner
+        default:      return .late
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .breakfast: return "Breakfast"
+        case .lunch:     return "Lunch"
+        case .dinner:    return "Dinner"
+        case .late:      return "Tomorrow's breakfast"
+        }
+    }
+
+    /// Imperative copy for the dashboard subtitle pill.
+    var logPrompt: String {
+        switch self {
+        case .breakfast: return "Log breakfast to start the day"
+        case .lunch:     return "Time to log lunch"
+        case .dinner:    return "Wrap the day with dinner"
+        case .late:      return "Day's done — rest up"
+        }
+    }
+}
+
 // ── Haptics ───────────────────────────────────────────────────────────────────
 // Small, consistent wrapper so views don't each reinvent generator plumbing.
 

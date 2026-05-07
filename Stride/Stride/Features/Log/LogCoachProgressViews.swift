@@ -987,6 +987,17 @@ struct CoachView: View {
         }
     }
 
+    /// Resolves what meal to surface in the "Focus on" card. Local time wins;
+    /// server's priorityMeal is only used at night when no meal makes sense.
+    private func currentFocusMeal(_ serverPriority: String?) -> String? {
+        let m = MealTime.current()
+        if m == .late {
+            // After 9 pm — defer to the server's choice if any, else hide.
+            return serverPriority?.capitalized
+        }
+        return m.displayName
+    }
+
     private var emptyCoachView: some View {
         WEmptyState(
             icon: "bubble.left.fill",
@@ -1013,13 +1024,17 @@ struct CoachView: View {
                     }
                 }
 
-                if let priorityMeal = msg.priorityMeal {
+                // Time-aware focus card. priorityMeal from the server reflects
+                // when the message was generated (often early morning), so we
+                // override with the user's *current* meal window. Falls back
+                // to the server value only for the late-night case.
+                if let focus = currentFocusMeal(msg.priorityMeal) {
                     WCard {
                         HStack {
                             Label("Focus on", systemImage: "target")
                                 .font(.labelMd)
                             Spacer()
-                            Text(priorityMeal.capitalized)
+                            Text(focus)
                                 .font(.labelMd)
                                 .foregroundColor(.brandGreen)
                         }
