@@ -237,10 +237,10 @@ private struct HeightKey: PreferenceKey {
 struct NotificationsSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var authStatus: UNAuthorizationStatus = .notDetermined
-    @State private var mealReminderOn   = false
-    @State private var mealReminderTime = Calendar.current.date(from: DateComponents(hour: 8, minute: 0)) ?? Date()
-    @State private var eveningCheckInOn   = false
-    @State private var eveningCheckInTime = Calendar.current.date(from: DateComponents(hour: 20, minute: 0)) ?? Date()
+
+    // Per-reminder toggle + time state, keyed by definition id.
+    @State private var enabled: [String: Bool] = [:]
+    @State private var times:   [String: Date] = [:]
 
     private let center = UNUserNotificationCenter.current()
 
@@ -277,35 +277,13 @@ struct NotificationsSettingsView: View {
                 }
 
                 Section {
-                    Toggle(isOn: $mealReminderOn) {
-                        Label("Morning meal reminder", systemImage: "sunrise.fill")
-                    }
-                    .tint(.brandGreen)
-                    .disabled(authStatus != .authorized)
-
-                    if mealReminderOn {
-                        DatePicker("Remind me at", selection: $mealReminderTime, displayedComponents: .hourAndMinute)
-                            .onChange(of: mealReminderTime) { _, _ in scheduleMealReminder() }
+                    ForEach(MealReminders.all) { def in
+                        reminderSection(def)
                     }
                 } header: {
-                    Text("Daily reminders")
+                    Text("Daily meal reminders")
                 } footer: {
-                    Text("Get a nudge to log your breakfast and start the day on track.")
-                }
-
-                Section {
-                    Toggle(isOn: $eveningCheckInOn) {
-                        Label("Evening check-in", systemImage: "moon.stars.fill")
-                    }
-                    .tint(.brandGreen)
-                    .disabled(authStatus != .authorized)
-
-                    if eveningCheckInOn {
-                        DatePicker("Remind me at", selection: $eveningCheckInTime, displayedComponents: .hourAndMinute)
-                            .onChange(of: eveningCheckInTime) { _, _ in scheduleEveningCheckIn() }
-                    }
-                } footer: {
-                    Text("A reminder to log your dinner and review today's progress.")
+                    Text("Local time. Stride sends a single quiet nudge per meal.")
                 }
             }
             .navigationTitle("Notifications")
@@ -315,65 +293,59 @@ struct NotificationsSettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .onChange(of: mealReminderOn) { _, on in
-                if on { scheduleMealReminder() } else { center.removePendingNotificationRequests(withIdentifiers: ["meal_reminder"]) }
-            }
-            .onChange(of: eveningCheckInOn) { _, on in
-                if on { scheduleEveningCheckIn() } else { center.removePendingNotificationRequests(withIdentifiers: ["evening_checkin"]) }
-            }
             .task { await loadStatus() }
+        }
+    }
+
+    @ViewBuilder
+    private func reminderSection(_ def: MealReminders.Definition) -> some View {
+        let isOn = Binding<Bool>(
+            get: { enabled[def.id] ?? false },
+            set: { newValue in
+                enabled[def.id] = newValue
+                if newValue {
+                    MealReminders.schedule(def, at: times[def.id] ?? MealReminders.savedTime(def))
+                } else {
+                    MealReminders.cancel(def)
+                }
+            }
+        )
+        let time = Binding<Date>(
+            get: { times[def.id] ?? MealReminders.savedTime(def) },
+            set: { newValue in
+                times[def.id] = newValue
+                if enabled[def.id] == true {
+                    MealReminders.schedule(def, at: newValue)
+                }
+            }
+        )
+
+        Toggle(isOn: isOn) {
+            Label(def.title, systemImage: def.icon)
+        }
+        .tint(.brandGreen)
+        .disabled(authStatus != .authorized)
+
+        if isOn.wrappedValue {
+            DatePicker("Remind me at", selection: time, displayedComponents: .hourAndMinute)
         }
     }
 
     private func loadStatus() async {
         let settings = await center.notificationSettings()
         authStatus = settings.authorizationStatus
-
-        // Restore saved toggles
-        mealReminderOn    = UserDefaults.standard.bool(forKey: "notif_meal_on")
-        eveningCheckInOn  = UserDefaults.standard.bool(forKey: "notif_evening_on")
-        if let t = UserDefaults.standard.object(forKey: "notif_meal_time") as? Date    { mealReminderTime = t }
-        if let t = UserDefaults.standard.object(forKey: "notif_evening_time") as? Date { eveningCheckInTime = t }
-    }
-
-    private func requestPermission() async {
-        do {
-            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-            authStatus = granted ? .authorized : .denied
-        } catch {
-            print("[notif] requestAuthorization: \(error)")
+        for def in MealReminders.all {
+            enabled[def.id] = MealReminders.isEnabled(def)
+            times[def.id]   = MealReminders.savedTime(def)
         }
     }
 
-    private func scheduleMealReminder() {
-        guard authStatus == .authorized else { return }
-        UserDefaults.standard.set(true, forKey: "notif_meal_on")
-        UserDefaults.standard.set(mealReminderTime, forKey: "notif_meal_time")
-
-        let content = UNMutableNotificationContent()
-        content.title = "Time to log breakfast 🌅"
-        content.body  = "Start your day strong — log your first meal in Stride."
-        content.sound = .default
-
-        var comps = Calendar.current.dateComponents([.hour, .minute], from: mealReminderTime)
-        comps.second = 0
-        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
-        center.add(UNNotificationRequest(identifier: "meal_reminder", content: content, trigger: trigger))
-    }
-
-    private func scheduleEveningCheckIn() {
-        guard authStatus == .authorized else { return }
-        UserDefaults.standard.set(true, forKey: "notif_evening_on")
-        UserDefaults.standard.set(eveningCheckInTime, forKey: "notif_evening_time")
-
-        let content = UNMutableNotificationContent()
-        content.title = "Evening check-in 🌙"
-        content.body  = "How did today go? Log your dinner and see today's progress in Stride."
-        content.sound = .default
-
-        var comps = Calendar.current.dateComponents([.hour, .minute], from: eveningCheckInTime)
-        comps.second = 0
-        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
-        center.add(UNNotificationRequest(identifier: "evening_checkin", content: content, trigger: trigger))
+    private func requestPermission() async {
+        authStatus = await MealReminders.requestAndEnableAll()
+        // Pick up any reminders that got auto-enabled by the helper.
+        for def in MealReminders.all {
+            enabled[def.id] = MealReminders.isEnabled(def)
+            times[def.id]   = MealReminders.savedTime(def)
+        }
     }
 }
