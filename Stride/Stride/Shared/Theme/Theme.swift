@@ -28,6 +28,15 @@ extension Color {
     static let textMuted     = Color(uiColor: .secondaryLabel)
     static let accentPeach   = Color(light: "#F5C7A3", dark: "#D38C5E")
     static let accentMint    = Color(light: "#BFE9D8", dark: "#2B6B58")
+    static let accentSky     = Color(light: "#A6D9F3", dark: "#3B7BA1")  // water / hydration
+
+    // Per-tab background tints — subtle so tabs feel distinct without losing
+    // brand consistency. Layered over the appBackground gradient.
+    static let tintHome     = Color(light: "#E1F5EE", dark: "#163A30") // brand green
+    static let tintMeals    = Color(light: "#FFF1E1", dark: "#3A2A16") // warm peach
+    static let tintCoach    = Color(light: "#EEEDFE", dark: "#2A2660") // brand purple
+    static let tintProgress = Color(light: "#FDE8D6", dark: "#3F2914") // amber
+    static let tintWater    = Color(light: "#E1EFFA", dark: "#163245") // sky blue
 
     /// Build a dynamic color that switches between light and dark values.
     init(light: String, dark: String) {

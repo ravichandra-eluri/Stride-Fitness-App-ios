@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct WScreenBackground<Content: View>: View {
+    /// Optional tint color layered over the base background. Each tab passes
+    /// its own (Color.tintHome, .tintMeals, .tintCoach, .tintProgress) so
+    /// tabs feel distinct without losing brand consistency.
+    var tint: Color = .brandGreenBg
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -8,8 +12,8 @@ struct WScreenBackground<Content: View>: View {
             LinearGradient(
                 colors: [
                     Color.appBackground,
-                    Color.brandGreenBg.opacity(0.75),
-                    Color.brandPurpleBg.opacity(0.45)
+                    tint.opacity(0.7),
+                    Color.brandPurpleBg.opacity(0.35)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -30,6 +34,35 @@ struct WScreenBackground<Content: View>: View {
 
             content()
         }
+    }
+}
+
+// ── WTabBackground — convenience tinted background applied per tab ──────────
+
+struct WTabBackground: ViewModifier {
+    let tint: Color
+    func body(content: Content) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color.appBackground,
+                    tint.opacity(0.55),
+                    Color.appBackground
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            content
+        }
+    }
+}
+
+extension View {
+    /// Apply a tinted background to a tab's root view. Subtle gradient overlay
+    /// that disambiguates tabs without abandoning the brand palette.
+    func tabBackground(_ tint: Color) -> some View {
+        modifier(WTabBackground(tint: tint))
     }
 }
 
@@ -590,6 +623,55 @@ struct WLoadingView: View {
     }
 }
 
+// ── WSkeleton — shimmering placeholder for content-loading states ───────────
+// Use to mimic the shape of the upcoming content while it loads (Home cards,
+// Meal plan day rows). Feels more premium than a centered spinner.
+
+struct WSkeleton: View {
+    var height: CGFloat = 16
+    var cornerRadius: CGFloat = 6
+    @State private var phase: CGFloat = -0.6
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.border.opacity(0.18))
+            .frame(height: height)
+            .overlay(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear,                        location: phase),
+                        .init(color: Color.white.opacity(0.55),     location: phase + 0.2),
+                        .init(color: .clear,                        location: phase + 0.4),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .onAppear {
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                    phase = 1.4
+                }
+            }
+    }
+}
+
+/// Card-shaped skeleton that mimics the WCard footprint.
+struct WSkeletonCard: View {
+    var lines: Int = 3
+    var body: some View {
+        WCard {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                ForEach(0..<lines, id: \.self) { i in
+                    WSkeleton(height: i == 0 ? 22 : 14)
+                        .frame(width: i == lines - 1 ? 160 : nil, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
 // ── WErrorView ────────────────────────────────────────────────────────────────
 
 struct WErrorView: View {
@@ -616,7 +698,8 @@ struct WErrorView: View {
 }
 
 // ── WEmptyState ──────────────────────────────────────────────────────────────
-// Consistent empty-state scaffold used across tabs.
+// Consistent empty-state scaffold used across tabs. Gradient badge + soft
+// pulse animation gives empty screens delight instead of flatness.
 
 struct WEmptyState: View {
     let icon: String
@@ -624,16 +707,36 @@ struct WEmptyState: View {
     let subtitle: String
     var ctaTitle: String? = nil
     var ctaAction: (() -> Void)? = nil
+    /// Tint pair for the gradient badge. Defaults to brand green→purple.
+    var tintColors: [Color] = [.brandGreen, .brandPurple]
+    @State private var pulse = false
 
     var body: some View {
         VStack(spacing: Spacing.md) {
             ZStack {
+                // Outer pulse ring
                 Circle()
-                    .fill(Color.brandGreenBg)
+                    .stroke(tintColors.first?.opacity(0.18) ?? Color.brandGreen.opacity(0.18), lineWidth: 1)
+                    .frame(width: pulse ? 112 : 88, height: pulse ? 112 : 88)
+                    .opacity(pulse ? 0 : 1)
+
+                Circle()
+                    .fill(
+                        LinearGradient(colors: tintColors,
+                                       startPoint: .topLeading,
+                                       endPoint: .bottomTrailing)
+                    )
                     .frame(width: 72, height: 72)
+                    .shadow(color: (tintColors.first ?? .brandGreen).opacity(0.25), radius: 12, x: 0, y: 6)
+
                 Image(systemName: icon)
-                    .font(.system(size: 28))
-                    .foregroundColor(.brandGreen)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .onAppear {
+                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                    pulse = true
+                }
             }
             Text(title).font(.titleSm)
             Text(subtitle)
