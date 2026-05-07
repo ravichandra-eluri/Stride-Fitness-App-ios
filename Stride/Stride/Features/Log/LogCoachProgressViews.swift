@@ -89,6 +89,11 @@ class LogFoodViewModel {
     }
 
     func applyNutrition(_ n: FoodNutrition) {
+        // Suppress the foodName onChange from re-triggering OFF search after
+        // we programmatically rewrite the name (Claude can return a canonical
+        // name like "Chicken Biryani" different from the user's input).
+        lastAppliedName = n.name
+        searchTask?.cancel()
         foodName     = n.name
         baseCalories = n.calories
         baseProteinG = n.proteinG
@@ -97,6 +102,10 @@ class LogFoodViewModel {
         servingSize  = n.servingSize.isEmpty ? "1 serving" : n.servingSize
         servings     = 1.0
         logMethod    = "manual"
+        suggestions = []
+        showSuggestions = false
+        noResults = false
+        isSearching = false
     }
 
     // Tracks the name last set by applySuggestion so onChange doesn't re-trigger a search.
@@ -155,12 +164,14 @@ class LogFoodViewModel {
             // Open Food Facts v2 search — much faster and more reliable than the
             // legacy cgi/search.pl endpoint. User-Agent is REQUIRED by OFF policy
             // to avoid IP-level rate limiting on anonymous traffic.
+            // No sort_by — OFF defaults to relevance scoring against the query.
+            // Adding "popularity_key" sorts by overall scan count (returns the
+            // most-popular OFF products regardless of relevance to the query).
             var comps = URLComponents(string: "https://world.openfoodfacts.org/api/v2/search")!
             comps.queryItems = [
                 URLQueryItem(name: "search_terms", value: query),
                 URLQueryItem(name: "fields",       value: "product_name,nutriments"),
                 URLQueryItem(name: "page_size",    value: "20"),
-                URLQueryItem(name: "sort_by",      value: "popularity_key"),
             ]
             guard let url = comps.url else {
                 await MainActor.run { self?.finishSearch(mySeq, results: [], norm: norm) }
@@ -175,11 +186,24 @@ class LogFoodViewModel {
                 let (data, _) = try await URLSession.shared.data(for: req)
                 guard !Task.isCancelled else { return }
                 let response = try JSONDecoder().decode(OFFResponse.self, from: data)
+                // OFF's relevance ranking is loose — it returns lots of
+                // tangentially-matching results. Keep only products whose
+                // name actually contains at least one query token, so
+                // "chicken biryani" doesn't surface "Fromage Blanc Nature".
+                let queryTokens = norm
+                    .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                    .map { $0.lowercased() }
+                    .filter { $0.count >= 3 }
                 let results: [FoodSuggestion] = response.products.compactMap { p in
                     guard let name = p.productName, !name.isEmpty,
                           let n = p.nutriments,
                           let kcal = n.energyKcal100g, kcal > 0
                     else { return nil }
+                    let lowerName = name.lowercased()
+                    if !queryTokens.isEmpty,
+                       !queryTokens.contains(where: { lowerName.contains($0) }) {
+                        return nil
+                    }
                     return FoodSuggestion(
                         name: name,
                         calories: Int(kcal),
@@ -539,8 +563,15 @@ struct LogFoodView: View {
                     .pickerStyle(.segmented)
                 }
 
-                // Per-serving base values — shown smaller to make clear the
-                // bigger Total below is the actual loggable amount.
+                // Servings is the primary user control — most-touched, so it
+                // sits up top right after meal type. Per-serving base values
+                // (mostly auto-filled by suggestions / AI / photo) live below
+                // for verification or manual edits.
+                servingsStepper
+                portionField
+
+                Divider().opacity(0.4)
+
                 HStack {
                     Text("Per serving")
                         .font(.labelSm)
@@ -570,8 +601,6 @@ struct LogFoodView: View {
 
                 Divider().opacity(0.4)
 
-                servingsStepper
-                portionField
                 totalBanner
             }
         }
