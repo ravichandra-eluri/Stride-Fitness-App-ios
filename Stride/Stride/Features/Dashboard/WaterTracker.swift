@@ -34,6 +34,14 @@ final class WaterTracker {
         persist()
     }
 
+    /// Re-read from UserDefaults. Used after sign-out clears the keys so the
+    /// in-memory singleton snaps back to a clean slate without an app restart.
+    func reloadFromDefaults() {
+        goal = 8
+        glasses = 0
+        load()
+    }
+
     func setGoal(_ g: Int) {
         goal = max(1, min(g, 30))
         UserDefaults.standard.set(goal, forKey: goalKey)
@@ -90,7 +98,7 @@ struct WaterCard: View {
                             .font(.labelMd)
                     }
                     Spacer()
-                    Text("\(tracker.glasses) of \(tracker.goal) · \(String(format: "%.2f L", tracker.litres))")
+                    Text(countLabel)
                         .font(.bodySm)
                         .foregroundColor(.textMuted)
                         .contentTransition(.numericText())
@@ -109,34 +117,45 @@ struct WaterCard: View {
                             .foregroundColor(.textMuted)
                     }
                     Spacer()
-                    HStack(spacing: 0) {
-                        Button {
+                    HStack(spacing: Spacing.xs) {
+                        stepperButton(
+                            icon: "minus",
+                            enabled: tracker.glasses > 0
+                        ) {
                             if tracker.glasses > 0 { tracker.add(-1) }
-                        } label: {
-                            Image(systemName: "minus")
-                                .font(.system(size: 13, weight: .semibold))
-                                .frame(width: 32, height: 30)
-                                .foregroundColor(tracker.glasses == 0 ? .textMuted : .accentSky)
                         }
-                        .disabled(tracker.glasses == 0)
-                        .buttonStyle(.plain)
-
-                        Button {
+                        stepperButton(icon: "plus", enabled: true) {
                             tracker.add(1)
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 13, weight: .semibold))
-                                .frame(width: 32, height: 30)
-                                .foregroundColor(.accentSky)
                         }
-                        .buttonStyle(.plain)
                     }
-                    .background(Color.accentSky.opacity(0.12))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(Color.accentSky.opacity(0.3), lineWidth: 1))
                 }
             }
         }
+    }
+
+    /// Big circular button to make hit targets obvious. The original 32×30
+    /// inline pair was too small — testers couldn't reliably tap the minus.
+    private func stepperButton(icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(enabled ? .white : Color.textMuted)
+                .frame(width: 40, height: 40)
+                .background(enabled ? Color.accentSky : Color.accentSky.opacity(0.18))
+                .clipShape(Circle())
+        }
+        .disabled(!enabled)
+        .buttonStyle(.plain)
+    }
+
+    /// Cleaner copy when over goal — "12 of 8" reads weirdly.
+    private var countLabel: String {
+        let litres = String(format: "%.2f L", tracker.litres)
+        if tracker.glasses > tracker.goal {
+            let over = tracker.glasses - tracker.goal
+            return "\(tracker.goal)/\(tracker.goal) +\(over) · \(litres)"
+        }
+        return "\(tracker.glasses) of \(tracker.goal) · \(litres)"
     }
 
     private var glassRow: some View {

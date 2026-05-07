@@ -61,6 +61,13 @@ final class StreakCelebrator {
 
     func dismiss() { active = nil }
 
+    /// Clear all celebrated milestones. Used on sign-out so a new account on
+    /// the same device gets the celebration UX fresh.
+    func reset() {
+        active = nil
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
     private func celebratedSet() -> Set<Int> {
         Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? [])
     }

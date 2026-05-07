@@ -120,9 +120,35 @@ class AppState {
         Keychain.delete("access_token")
         Keychain.delete("refresh_token")
         Keychain.delete("user_id")
-        UserDefaults.standard.removeObject(forKey: "onboarding_complete")
+        clearUserDefaults()
         userID = ""
         accessToken = ""
         route = .auth
+    }
+
+    /// Wipe every per-user UserDefaults entry so a fresh sign-in starts clean.
+    /// Without this, water glasses, streak celebrations, notification toggles,
+    /// and coach throttle leak from one account to the next on the same device.
+    private func clearUserDefaults() {
+        let d = UserDefaults.standard
+
+        // Static keys
+        let staticKeys = [
+            "onboarding_complete",
+            "lastCoachForceRefresh",
+            "streak_celebrated_milestones",
+            "water_glasses", "water_date", "water_goal",
+        ]
+        for k in staticKeys { d.removeObject(forKey: k) }
+
+        // Prefix-based keys (per-meal-plan grocery checks, per-reminder notifs)
+        for key in d.dictionaryRepresentation().keys
+        where key.hasPrefix("grocery_checked_") || key.hasPrefix("notif_") {
+            d.removeObject(forKey: key)
+        }
+
+        // Reset in-memory singletons so the live UI catches up immediately.
+        WaterTracker.shared.reloadFromDefaults()
+        StreakCelebrator.shared.reset()
     }
 }
