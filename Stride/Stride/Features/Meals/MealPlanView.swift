@@ -122,14 +122,15 @@ struct MealPlanView: View {
     @State private var vm = MealPlanViewModel()
     @State private var showOnboarding = false
     @State private var mealToLog: Meal?
+    @State private var recipeMeal: Meal?
 
     var body: some View {
         NavigationStack {
             Group {
                 if vm.isLoading {
-                    WLoadingView(message: "Loading your meal plan...")
+                    mealPlanSkeleton
                 } else if vm.isRegenerating {
-                    // Generating a plan takes 30–90s of Claude time. Show a
+                    // Generating a plan takes 30-90s of Claude time. Show a
                     // richer placeholder so the user knows what's happening.
                     GeneratingMealPlanView()
                 } else if let error = vm.error {
@@ -142,6 +143,7 @@ struct MealPlanView: View {
                     emptyMealPlanView
                 }
             }
+            .tabBackground(.tintMeals)
             .navigationTitle("Meal plan")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -164,6 +166,11 @@ struct MealPlanView: View {
         }
         .sheet(item: $mealToLog) { meal in
             LogMealSheet(meal: meal)
+        }
+        .sheet(item: $recipeMeal) { meal in
+            RecipeSheet(meal: meal)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: .init(
             get: { vm.swapTargetMeal != nil },
@@ -295,58 +302,85 @@ struct MealPlanView: View {
     }
 
     private func mealCard(_ meal: Meal) -> some View {
-        WCard {
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label(meal.mealType.capitalized, systemImage: mealIcon(meal.mealType))
+        Button {
+            recipeMeal = meal
+            Haptics.selection()
+        } label: {
+            WCard {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label(meal.mealType.capitalized, systemImage: mealIcon(meal.mealType))
+                                .font(.labelSm)
+                                .foregroundColor(mealTint(meal.mealType))
+                            Text(meal.name)
+                                .font(.labelMd)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer()
+                        HStack(spacing: Spacing.sm) {
+                            Button {
+                                mealToLog = meal
+                                Haptics.impact(.light)
+                            } label: {
+                                Text("Log")
+                                    .font(.labelSm)
+                                    .foregroundColor(.brandGreen)
+                                    .padding(.horizontal, Spacing.sm)
+                                    .padding(.vertical, 4)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.brandGreen.opacity(0.5), lineWidth: 0.5)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            Button {
+                                Task { await vm.loadSwapAlternatives(for: meal) }
+                            } label: {
+                                Text("Swap")
+                                    .font(.labelSm)
+                                    .foregroundColor(.infoText)
+                                    .padding(.horizontal, Spacing.sm)
+                                    .padding(.vertical, 4)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.infoText.opacity(0.4), lineWidth: 0.5)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    HStack(spacing: Spacing.lg) {
+                        Text("\(meal.calories) cal").font(.bodySm).foregroundColor(.textMuted)
+                        Text("P \(Int(meal.proteinG))g").font(.bodySm).foregroundColor(.textMuted)
+                        Text("C \(Int(meal.carbsG))g").font(.bodySm).foregroundColor(.textMuted)
+                        Text("F \(Int(meal.fatG))g").font(.bodySm).foregroundColor(.textMuted)
+                        Spacer()
+                        Image(systemName: "book")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.textMuted)
+                        Text("Recipe")
                             .font(.labelSm)
-                            .foregroundColor(mealTint(meal.mealType))
-                        Text(meal.name)
-                            .font(.labelMd)
-                    }
-                    Spacer()
-                    HStack(spacing: Spacing.sm) {
-                        Button {
-                            mealToLog = meal
-                            Haptics.impact(.light)
-                        } label: {
-                            Text("Log")
-                                .font(.labelSm)
-                                .foregroundColor(.brandGreen)
-                                .padding(.horizontal, Spacing.sm)
-                                .padding(.vertical, 4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color.brandGreen.opacity(0.5), lineWidth: 0.5)
-                                )
-                        }
-                        Button {
-                            Task { await vm.loadSwapAlternatives(for: meal) }
-                        } label: {
-                            Text("Swap")
-                                .font(.labelSm)
-                                .foregroundColor(.infoText)
-                                .padding(.horizontal, Spacing.sm)
-                                .padding(.vertical, 4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color.infoText.opacity(0.4), lineWidth: 0.5)
-                                )
-                        }
-                    }
-                }
-                HStack(spacing: Spacing.lg) {
-                    Text("\(meal.calories) cal").font(.bodySm).foregroundColor(.textMuted)
-                    Text("P \(Int(meal.proteinG))g").font(.bodySm).foregroundColor(.textMuted)
-                    Text("C \(Int(meal.carbsG))g").font(.bodySm).foregroundColor(.textMuted)
-                    Text("F \(Int(meal.fatG))g").font(.bodySm).foregroundColor(.textMuted)
-                    Spacer()
-                    if let prep = meal.prepMinutes {
-                        Text("\(prep) min").font(.bodySm).foregroundColor(.textMuted)
+                            .foregroundColor(.textMuted)
                     }
                 }
             }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var mealPlanSkeleton: some View {
+        ScrollView {
+            VStack(spacing: Spacing.md) {
+                WSkeleton(height: 36, cornerRadius: 18)
+                    .frame(maxWidth: 280, alignment: .leading)
+                WSkeletonCard(lines: 3)
+                ForEach(0..<4, id: \.self) { _ in
+                    WSkeletonCard(lines: 3)
+                }
+            }
+            .padding(Spacing.md)
         }
     }
 
@@ -721,5 +755,137 @@ struct GeneratingMealPlanView: View {
             }
         }
         .opacity(0.6)
+    }
+}
+
+// ── Recipe sheet ─────────────────────────────────────────────────────────────
+// Generated on demand via Claude. No caching server-side, but cached client-
+// side per Meal.id within the sheet's lifetime so re-opening is instant.
+
+@Observable
+@MainActor
+final class RecipeSheetViewModel {
+    var recipe: MealRecipe?
+    var isLoading = true
+    var error: String?
+
+    func load(for meal: Meal) async {
+        isLoading = true
+        error = nil
+        do {
+            recipe = try await APIClient.shared.getMealRecipe(name: meal.name)
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
+    }
+}
+
+struct RecipeSheet: View {
+    let meal: Meal
+    @State private var vm = RecipeSheetViewModel()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if vm.isLoading {
+                    skeleton
+                } else if let r = vm.recipe {
+                    content(r)
+                } else if let err = vm.error {
+                    WErrorView(message: err) { Task { await vm.load(for: meal) } }
+                } else {
+                    EmptyView()
+                }
+            }
+            .navigationTitle(meal.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .task { await vm.load(for: meal) }
+    }
+
+    private var skeleton: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                WSkeletonCard(lines: 2)
+                WSkeletonCard(lines: 6)
+                WSkeletonCard(lines: 5)
+            }
+            .padding(Spacing.md)
+        }
+    }
+
+    private func content(_ r: MealRecipe) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                // Header summary
+                WCard {
+                    HStack(spacing: Spacing.lg) {
+                        statBlock(value: "\(meal.calories)", label: "cal", color: .brandGreen)
+                        statBlock(value: "\(r.prepMinutes)", label: "min", color: .warning)
+                        statBlock(value: "\(r.servings)",    label: "serving", color: .brandPurple)
+                    }
+                }
+
+                // Ingredients
+                WCard {
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        Label("Ingredients", systemImage: "list.bullet")
+                            .font(.labelMd)
+                            .foregroundColor(.brandGreen)
+                        ForEach(Array(r.ingredients.enumerated()), id: \.offset) { _, ing in
+                            HStack(alignment: .top, spacing: Spacing.sm) {
+                                Circle()
+                                    .fill(Color.brandGreen.opacity(0.5))
+                                    .frame(width: 5, height: 5)
+                                    .padding(.top, 7)
+                                Text(ing).font(.bodyMd)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+
+                // Steps
+                WCard {
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        Label("Steps", systemImage: "list.number")
+                            .font(.labelMd)
+                            .foregroundColor(.brandPurple)
+                        ForEach(Array(r.steps.enumerated()), id: \.offset) { i, step in
+                            HStack(alignment: .top, spacing: Spacing.sm) {
+                                Text("\(i + 1)")
+                                    .font(.labelSm)
+                                    .foregroundColor(.brandPurple)
+                                    .frame(width: 22, height: 22)
+                                    .background(Color.brandPurpleBg)
+                                    .clipShape(Circle())
+                                Text(step).font(.bodyMd)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(Spacing.md)
+        }
+    }
+
+    private func statBlock(value: String, label: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundColor(color)
+            Text(label)
+                .font(.bodySm)
+                .foregroundColor(.textMuted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

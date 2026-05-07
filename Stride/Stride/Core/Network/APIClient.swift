@@ -224,6 +224,11 @@ extension APIClient {
         try await get("/api/meals/grocery-list" + (force ? "?force=true" : ""))
     }
 
+    func getMealRecipe(name: String) async throws -> MealRecipe {
+        struct Body: Encodable { let name: String }
+        return try await post("/api/meals/recipe", body: Body(name: name))
+    }
+
     func swapMeal(mealPlanID: String, day: String, meal: Meal, filter: String) async throws -> [Meal] {
         struct Body: Encodable {
             let mealPlanId: String

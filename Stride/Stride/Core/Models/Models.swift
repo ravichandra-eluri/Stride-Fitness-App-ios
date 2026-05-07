@@ -133,6 +133,16 @@ struct GroceryList: Codable {
     let categories: [GroceryCategory]
 }
 
+// ── Meal recipe ───────────────────────────────────────────────────────────────
+
+struct MealRecipe: Codable {
+    let name: String
+    let servings: Int
+    let prepMinutes: Int
+    let ingredients: [String]
+    let steps: [String]
+}
+
 // ── Daily log ─────────────────────────────────────────────────────────────────
 
 struct DailyLog: Decodable {
