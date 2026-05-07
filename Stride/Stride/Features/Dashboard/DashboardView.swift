@@ -159,6 +159,8 @@ struct DashboardView: View {
     var onTapLog: (() -> Void)? = nil
     @State private var vm = DashboardViewModel()
     @State private var hk = HealthKitManager.shared
+    @State private var water = WaterTracker.shared
+    @State private var celebrator = StreakCelebrator.shared
     @State private var showProfile = false
     @State private var showOnboarding = false
     @State private var showCalorieDetail = false
@@ -170,11 +172,12 @@ struct DashboardView: View {
         NavigationStack {
             Group {
                 if vm.isLoading {
-                    WLoadingView()
+                    dashboardSkeleton
                 } else {
                     dashboardContent
                 }
             }
+            .tabBackground(.tintHome)
             .navigationTitle(greeting)
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -204,9 +207,14 @@ struct DashboardView: View {
                 }
             }
         }
+        .overlay { StreakCelebrationOverlay(celebrator: celebrator) }
         .task {
             await vm.load()
             await hk.requestAuthorization()
+            celebrator.evaluate(streakDays: vm.streakDays)
+        }
+        .onChange(of: vm.streakDays) { _, newVal in
+            celebrator.evaluate(streakDays: newVal)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -234,9 +242,57 @@ struct DashboardView: View {
         return name.isEmpty ? time : "\(time), \(name)"
     }
 
+    /// Adaptive one-liner under the greeting that gives the user a small
+    /// dopamine hit on every open. Picks the most "earned" status available.
+    private var greetingSubtitle: String? {
+        if vm.streakDays >= 3 { return "🔥 \(vm.streakDays)-day streak going" }
+        if vm.goalProgressFraction >= 0.5 && vm.goalWeight > 0 {
+            return "Halfway to your goal"
+        }
+        if vm.caloriesEaten == 0 && Calendar.current.component(.hour, from: Date()) > 9 {
+            return "Log breakfast to start the day"
+        }
+        if vm.todayLog?.entries?.isEmpty == false {
+            return "Nice start, keep going"
+        }
+        return nil
+    }
+
+    // ── Skeleton ─────────────────────────────────────────────────────────────
+    // Shown while vm.load() is in flight. Matches the dashboard footprint so
+    // the layout doesn't jump when real data arrives.
+    private var dashboardSkeleton: some View {
+        ScrollView {
+            VStack(spacing: Spacing.md) {
+                WSkeleton(height: 48, cornerRadius: 8)
+                WCard {
+                    WSkeleton(height: 200, cornerRadius: 12)
+                }
+                WSkeletonCard(lines: 3)
+                WSkeletonCard(lines: 4)
+            }
+            .padding(Spacing.md)
+        }
+    }
+
     private var dashboardContent: some View {
         ScrollView {
             VStack(spacing: Spacing.md) {
+
+                // Subtitle pill — small adaptive status under the greeting
+                if let sub = greetingSubtitle {
+                    HStack(spacing: 6) {
+                        Text(sub)
+                            .font(.labelSm)
+                            .foregroundColor(.brandGreen)
+                    }
+                    .padding(.horizontal, Spacing.sm)
+                    .padding(.vertical, 4)
+                    .background(Color.brandGreenBg.opacity(0.6))
+                    .clipShape(Capsule())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+                }
 
                 weekStrip
 
@@ -279,6 +335,9 @@ struct DashboardView: View {
                 if let msg = vm.coachMessage {
                     WCoachBubble(message: msg.message)
                 }
+
+                // Water tracking — small habit reinforcement card
+                WaterCard(tracker: water)
 
                 // Today’s food log — grouped by meal type
                 VStack(alignment: .leading, spacing: Spacing.sm) {
