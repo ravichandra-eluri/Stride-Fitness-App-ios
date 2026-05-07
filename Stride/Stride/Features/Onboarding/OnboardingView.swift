@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 // ── Onboarding ViewModel ──────────────────────────────────────────────────────
 
@@ -55,6 +56,13 @@ class OnboardingViewModel {
         }
     }
 
+    func previous() {
+        // Don't allow going back from Generating (in-flight API call) or
+        // Result (already done). Other steps can step back freely.
+        guard currentStep > 0, currentStep < 3 else { return }
+        withAnimation { currentStep -= 1 }
+    }
+
     var buildProfile: UserProfile {
         UserProfile(
             name: name, age: age, gender: gender,
@@ -102,7 +110,24 @@ struct OnboardingFlowView: View {
         WScreenBackground {
             VStack(spacing: 0) {
                 VStack(spacing: Spacing.md) {
-                    HStack {
+                    HStack(spacing: Spacing.sm) {
+                        // Back chevron — only on input steps (Body, Lifestyle).
+                        // Hidden on first step, Generating, and Result.
+                        if vm.currentStep > 0 && vm.currentStep < 3 {
+                            Button {
+                                Haptics.selection()
+                                vm.previous()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.brandGreen)
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.white.opacity(0.6))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+
                         Text("Step \(min(vm.currentStep + 1, vm.totalSteps)) of \(vm.totalSteps)")
                             .font(.labelSm)
                             .foregroundColor(.textMuted)
@@ -549,6 +574,8 @@ struct OnboardingGeneratingScreen: View {
 struct OnboardingResultScreen: View {
     @Bindable var vm: OnboardingViewModel
     let onComplete: () -> Void
+    @State private var notifStatus: UNAuthorizationStatus = .notDetermined
+    @State private var isRequestingNotifs = false
 
     var body: some View {
         ScrollView {
@@ -589,11 +616,82 @@ struct OnboardingResultScreen: View {
                     }
                 }
 
+                notificationCTA
+
                 WButton(title: "Go to my dashboard", action: onComplete)
                     .padding(.top, Spacing.sm)
             }
             .padding(Spacing.lg)
         }
+        .task { await refreshNotifStatus() }
+    }
+
+    // ── Notification permission CTA ──────────────────────────────────────────
+    // Asked here (rather than during the form steps) so the prompt lands at a
+    // moment of completion / commitment, which converts much better than a
+    // cold permission ask earlier in the flow. Tapping schedules all three
+    // meal reminders at default times (8am / 12pm / 7pm local). Settings →
+    // Notifications can change times or toggle individual reminders later.
+    private var notificationCTA: some View {
+        WCard {
+            HStack(spacing: Spacing.md) {
+                ZStack {
+                    Circle()
+                        .fill(notifStatus == .authorized ? Color.success : Color.brandGreenBg)
+                        .frame(width: 44, height: 44)
+                    Image(systemName: notifStatus == .authorized ? "checkmark" : "bell.badge.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(notifStatus == .authorized ? .white : .brandGreen)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(notifStatus == .authorized ? "Reminders on" : "Don't miss meals")
+                        .font(.labelMd)
+                    Text(ctaSubtitle)
+                        .font(.bodySm)
+                        .foregroundColor(.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if notifStatus == .notDetermined {
+                    Button {
+                        Task {
+                            isRequestingNotifs = true
+                            notifStatus = await MealReminders.requestAndEnableAll()
+                            isRequestingNotifs = false
+                        }
+                    } label: {
+                        if isRequestingNotifs {
+                            ProgressView().tint(.brandGreen)
+                        } else {
+                            Text("Enable")
+                                .font(.labelMd)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, Spacing.md)
+                                .padding(.vertical, 8)
+                                .background(Color.brandGreen)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .disabled(isRequestingNotifs)
+                }
+            }
+        }
+    }
+
+    private var ctaSubtitle: String {
+        switch notifStatus {
+        case .authorized:
+            return "We'll nudge you at 8am, 12pm, and 7pm — change times in Settings."
+        case .denied:
+            return "Enable in Settings → Stride → Notifications to get reminders."
+        default:
+            return "Get nudges at 8am, 12pm, and 7pm to log breakfast, lunch, and dinner."
+        }
+    }
+
+    private func refreshNotifStatus() async {
+        let s = await UNUserNotificationCenter.current().notificationSettings()
+        notifStatus = s.authorizationStatus
     }
 
     private func resultRow(icon: String, title: String, detail: String) -> some View {
