@@ -47,7 +47,12 @@ struct MainTabView: View {
 @MainActor
 
 class DashboardViewModel {
-    var todayLog: TodayLogResponse?
+    /// Log for the currently viewed day. Populated by either `load()` (today)
+    /// or `loadForDate(_:)` (any day from the week strip).
+    var dayLog: TodayLogResponse?
+    /// Date the dashboard is currently showing data for.
+    var viewingDate: Date = Calendar.current.startOfDay(for: Date())
+    var isLoadingDay = false
     var coachMessage: CoachMessage?
     var profile: UserProfile?
     var weightHistory: [WeightEntry] = []
@@ -64,8 +69,9 @@ class DashboardViewModel {
         // Load log and profile in parallel (fast DB queries)
         async let logTask     = try? APIClient.shared.getTodayLog()
         async let profileTask = try? APIClient.shared.getProfile()
-        todayLog = await logTask
+        dayLog = await logTask
         profile  = await profileTask
+        viewingDate = Calendar.current.startOfDay(for: Date())
         isLoading = false
 
         // Secondary loads — run after UI is visible, order doesn't matter
@@ -75,6 +81,36 @@ class DashboardViewModel {
         let raw = await weightsTask ?? []
         weightHistory  = raw.sorted { $0.loggedAtDate < $1.loggedAtDate }
     }
+
+    /// Re-fetch only the day-specific data (calories, entries, macros) for the
+    /// given date. Coach message, profile, weights stay as-is — they're not
+    /// per-day. Future dates short-circuit to an empty log.
+    func loadForDate(_ date: Date) async {
+        let normalised = Calendar.current.startOfDay(for: date)
+        viewingDate = normalised
+
+        // Future date: nothing to fetch, show empty.
+        if normalised > Calendar.current.startOfDay(for: Date()) {
+            dayLog = nil
+            return
+        }
+        isLoadingDay = true
+        defer { isLoadingDay = false }
+
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = .current
+        let dateStr = f.string(from: normalised)
+
+        if Calendar.current.isDateInToday(normalised) {
+            dayLog = try? await APIClient.shared.getTodayLog()
+        } else {
+            dayLog = try? await APIClient.shared.getLogForDate(dateStr)
+        }
+    }
+
+    var isViewingToday: Bool { Calendar.current.isDateInToday(viewingDate) }
+    var isViewingFuture: Bool { viewingDate > Calendar.current.startOfDay(for: Date()) }
 
     /// Refresh just the coach message — used when app re-enters foreground
     /// without re-triggering the full dashboard load.
@@ -95,16 +131,16 @@ class DashboardViewModel {
         return false
     }
 
-    var caloriesEaten: Int { todayLog?.log?.caloriesEaten ?? 0 }
+    var caloriesEaten: Int { dayLog?.log?.caloriesEaten ?? 0 }
     var calorieTarget: Int { profile?.calorieTarget ?? 1800 }
     var caloriesLeft:  Int { max(calorieTarget - caloriesEaten, 0) }
-    var protein: Double    { todayLog?.log?.proteinG ?? 0 }
-    var carbs: Double      { todayLog?.log?.carbsG ?? 0 }
-    var fat: Double        { todayLog?.log?.fatG ?? 0 }
+    var protein: Double    { dayLog?.log?.proteinG ?? 0 }
+    var carbs: Double      { dayLog?.log?.carbsG ?? 0 }
+    var fat: Double        { dayLog?.log?.fatG ?? 0 }
     var proteinTarget: Int { profile?.proteinTargetG ?? 0 }
     var carbsTarget: Int   { profile?.carbsTargetG ?? 0 }
     var fatTarget: Int     { profile?.fatTargetG ?? 0 }
-    var streakDays: Int    { todayLog?.log?.streakDay ?? 0 }
+    var streakDays: Int    { dayLog?.log?.streakDay ?? 0 }
 
     // Goal progress — uses weight log history if available, falls back to profile
     var startWeight: Double  { weightHistory.first?.weightKg ?? profile?.currentWeightKg ?? 0 }
@@ -123,9 +159,9 @@ class DashboardViewModel {
     /// Optimistically remove the entry locally, then tell the server. On
     /// failure we reload from source of truth so state stays consistent.
     func deleteEntry(_ entry: FoodEntry) async {
-        let originalLog = todayLog
+        let originalLog = dayLog
         // Rebuild the entire struct so @Observable reliably fires and the ring updates immediately.
-        if var updated = todayLog {
+        if var updated = dayLog {
             updated.entries?.removeAll(where: { $0.id == entry.id })
             if let log = updated.log {
                 updated.log = DailyLog(
@@ -138,7 +174,7 @@ class DashboardViewModel {
                     streakDay: log.streakDay
                 )
             }
-            todayLog = updated
+            dayLog = updated
             Haptics.impact(.light)
         }
         do {
@@ -146,7 +182,7 @@ class DashboardViewModel {
             // Optimistic update already applied above — don't reload here.
             // load() would race the server and could overwrite with stale data.
         } catch {
-            todayLog = originalLog
+            dayLog = originalLog
             Haptics.notify(.error)
             print("[Dashboard] delete failed: \(error)")
         }
@@ -244,7 +280,10 @@ struct DashboardView: View {
 
     /// Adaptive one-liner under the greeting that gives the user a small
     /// dopamine hit on every open. Picks the most "earned" status available.
+    /// Hidden when viewing past or future days (subtitle only makes sense for
+    /// "today"-level prompts).
     private var greetingSubtitle: String? {
+        guard vm.isViewingToday else { return nil }
         if vm.streakDays >= 3 { return "🔥 \(vm.streakDays)-day streak going" }
         if vm.goalProgressFraction >= 0.5 && vm.goalWeight > 0 {
             return "Halfway to your goal"
@@ -255,10 +294,39 @@ struct DashboardView: View {
             let mealTime = MealTime.current()
             if mealTime != .late { return mealTime.logPrompt }
         }
-        if vm.todayLog?.entries?.isEmpty == false {
+        if vm.dayLog?.entries?.isEmpty == false {
             return "Nice start, keep going"
         }
         return nil
+    }
+
+    private var mealsHeader: String {
+        if vm.isViewingToday { return "Today's meals" }
+        if vm.isViewingFuture { return "Planned meals" }
+        let f = DateFormatter(); f.dateFormat = "EEEE"
+        return "\(f.string(from: vm.viewingDate))'s meals"
+    }
+
+    private var viewingDateLabel: String {
+        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"
+        return f.string(from: vm.viewingDate)
+    }
+
+    /// Empty-state placeholder used for past days with no entries and future
+    /// days that haven't happened yet.
+    private func emptyDayCard(icon: String, text: String) -> some View {
+        VStack(spacing: Spacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 28))
+                .foregroundColor(.textMuted)
+            Text(text)
+                .font(.bodyMd)
+                .foregroundColor(.textMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Spacing.xl)
+        .background(Color.cardSurface.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.md))
     }
 
     // ── Skeleton ─────────────────────────────────────────────────────────────
@@ -334,29 +402,40 @@ struct DashboardView: View {
 
                 heroPager
 
-                // Coach message
-                if let msg = vm.coachMessage {
-                    WCoachBubble(message: msg.message)
+                // Coach message + water are today-only — hide on past/future days.
+                if vm.isViewingToday {
+                    if let msg = vm.coachMessage {
+                        WCoachBubble(message: msg.message)
+                    }
+                    WaterCard(tracker: water)
                 }
 
-                // Water tracking — small habit reinforcement card
-                WaterCard(tracker: water)
-
-                // Today’s food log — grouped by meal type
+                // Day's food log — grouped by meal type. Header reflects which
+                // day is being viewed.
                 VStack(alignment: .leading, spacing: Spacing.sm) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Today's meals").font(.titleMd)
+                        Text(mealsHeader).font(.titleMd)
                         Spacer()
-                        Text(todayDateLabel)
+                        Text(viewingDateLabel)
                             .font(.bodySm)
                             .foregroundColor(.textMuted)
                     }
                     .padding(.horizontal, Spacing.xs)
 
-                    if let entries = vm.todayLog?.entries, !entries.isEmpty {
+                    if let entries = vm.dayLog?.entries, !entries.isEmpty {
                         ForEach(groupedEntries(entries), id: \.0) { mealType, mealEntries in
                             mealGroupCard(mealType: mealType, entries: mealEntries)
                         }
+                    } else if vm.isViewingFuture {
+                        emptyDayCard(
+                            icon: "calendar.badge.clock",
+                            text: "No meals logged for this day yet"
+                        )
+                    } else if !vm.isViewingToday {
+                        emptyDayCard(
+                            icon: "tray",
+                            text: "Nothing was logged on this day"
+                        )
                     } else {
                         Button {
                             Haptics.impact(.light)
@@ -415,7 +494,10 @@ struct DashboardView: View {
                 Button {
                     Haptics.selection()
                     selectedDate = cal.startOfDay(for: d)
-                    Task { await hk.loadDate(selectedDate) }
+                    Task {
+                        await hk.loadDate(selectedDate)
+                        await vm.loadForDate(selectedDate)
+                    }
                 } label: {
                     VStack(spacing: 6) {
                         Text(dayFmt.string(from: d))
@@ -715,7 +797,7 @@ struct DashboardView: View {
 
                 HStack(spacing: Spacing.sm) {
                     achievementChip(icon: "flame.fill", value: "\(vm.streakDays)", label: "streak", color: .warning)
-                    achievementChip(icon: "checkmark.seal.fill", value: "\(vm.todayLog?.entries?.count ?? 0)", label: "logged", color: .brandGreen)
+                    achievementChip(icon: "checkmark.seal.fill", value: "\(vm.dayLog?.entries?.count ?? 0)", label: "logged", color: .brandGreen)
                     achievementChip(icon: "sparkles", value: "AI", label: "coach on", color: .brandPurple)
                 }
             }
@@ -891,6 +973,7 @@ struct DashboardView: View {
 
 struct CalorieDetailSheet: View {
     let vm: DashboardViewModel
+    @State private var water = WaterTracker.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -914,24 +997,9 @@ struct CalorieDetailSheet: View {
                     }
                     .padding(.horizontal, Spacing.md)
 
-                    // Macros
-                    WCard {
-                        VStack(alignment: .leading, spacing: Spacing.md) {
-                            HStack {
-                                Text("Macros").font(.labelMd)
-                                Spacer()
-                                Text("\(vm.calorieTarget) cal = \(vm.proteinTarget)g P · \(vm.carbsTarget)g C · \(vm.fatTarget)g F")
-                                    .font(.caption)
-                                    .foregroundColor(.textMuted)
-                            }
-                            WMacroRow(
-                                protein: vm.protein, proteinTarget: Double(vm.proteinTarget),
-                                carbs: vm.carbs, carbsTarget: Double(vm.carbsTarget),
-                                fat: vm.fat, fatTarget: Double(vm.fatTarget)
-                            )
-                        }
-                    }
-                    .padding(.horizontal, Spacing.md)
+                    // Daily progress grid — each metric with its benefit
+                    dailyProgressSection
+                        .padding(.horizontal, Spacing.md)
 
                     // Entries list
                     VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -939,7 +1007,7 @@ struct CalorieDetailSheet: View {
                             .font(.labelMd)
                             .padding(.horizontal, Spacing.md)
 
-                        if let entries = vm.todayLog?.entries, !entries.isEmpty {
+                        if let entries = vm.dayLog?.entries, !entries.isEmpty {
                             WCard(padding: 0) {
                                 VStack(spacing: 0) {
                                     ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
@@ -984,6 +1052,163 @@ struct CalorieDetailSheet: View {
                 }
             }
         }
+    }
+
+    // ── Daily progress section ───────────────────────────────────────────────
+    // Grid of trackable metrics with benefit copy. Only shows what we can
+    // actually measure today (calories, macros, water, fiber estimate). The
+    // footer hints at vitamin/mineral expansion in a future release so users
+    // know it's planned, not an oversight.
+
+    private var dailyProgressSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            HStack {
+                Text("Daily progress").font(.labelMd)
+                Spacer()
+                Text("\(progressMetrics.filter(\.isHit).count) of \(progressMetrics.count) hit")
+                    .font(.bodySm)
+                    .foregroundColor(.textMuted)
+            }
+            .padding(.horizontal, Spacing.xs)
+
+            LazyVGrid(
+                columns: [GridItem(.flexible(), spacing: Spacing.sm),
+                          GridItem(.flexible(), spacing: Spacing.sm)],
+                spacing: Spacing.sm
+            ) {
+                ForEach(progressMetrics) { metric in
+                    metricCard(metric)
+                }
+            }
+
+            // Footer card teases future vitamin/mineral tracking so users
+            // understand this surface will grow over time.
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.brandPurple)
+                Text("Vitamin and mineral tracking coming in a future update.")
+                    .font(.bodySm)
+                    .foregroundColor(.textMuted)
+                Spacer()
+            }
+            .padding(Spacing.sm)
+            .background(Color.brandPurpleBg.opacity(0.4))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+        }
+    }
+
+    private struct ProgressMetric: Identifiable {
+        let id: String
+        let name: String
+        let value: Double
+        let target: Double
+        let unit: String
+        let benefit: String
+        let accent: Color
+
+        var fraction: Double { target == 0 ? 0 : min(value / target, 1) }
+        var isHit: Bool { target > 0 && value >= target * 0.95 }
+
+        var valueLabel: String {
+            // Whole numbers for calories/water glasses, one decimal for grams.
+            let isInteger = unit == "cal" || unit.hasSuffix("glass")
+                            || unit.hasSuffix("glasses")
+            let formatted = isInteger
+                ? "\(Int(value.rounded()))"
+                : String(format: "%.1f", value)
+            return formatted
+        }
+        var targetLabel: String {
+            target == 0 ? "" : "/ \(Int(target.rounded())) \(unit)"
+        }
+    }
+
+    private var progressMetrics: [ProgressMetric] {
+        // Estimate fiber as ~10% of carbs intake (rough but useful directional
+        // signal). Sodium, sugar, vitamins not tracked yet.
+        let fiberEstimate  = vm.carbs * 0.10
+        let fiberTarget    = max(Double(vm.carbsTarget) * 0.15, 25)
+        let waterGlasses   = Double(water.glasses)
+        let waterTarget    = Double(water.goal)
+
+        return [
+            .init(id: "calories", name: "Calories",
+                  value: Double(vm.caloriesEaten),
+                  target: Double(vm.calorieTarget),
+                  unit: "cal",
+                  benefit: "Total daily fuel",
+                  accent: .brandGreen),
+            .init(id: "protein", name: "Protein",
+                  value: vm.protein, target: Double(vm.proteinTarget),
+                  unit: "g",
+                  benefit: "Muscle, recovery, satiety",
+                  accent: .brandPurple),
+            .init(id: "carbs", name: "Carbs",
+                  value: vm.carbs, target: Double(vm.carbsTarget),
+                  unit: "g",
+                  benefit: "Energy, brain function",
+                  accent: .brandGreen),
+            .init(id: "fat", name: "Fat",
+                  value: vm.fat, target: Double(vm.fatTarget),
+                  unit: "g",
+                  benefit: "Hormones, vitamin absorption",
+                  accent: .warning),
+            .init(id: "fiber", name: "Fiber",
+                  value: fiberEstimate, target: fiberTarget,
+                  unit: "g",
+                  benefit: "Digestion, fullness, gut",
+                  accent: .accentMint),
+            .init(id: "water", name: "Water",
+                  value: waterGlasses, target: waterTarget,
+                  unit: "glasses",
+                  benefit: "Skin, energy, focus",
+                  accent: .accentSky),
+        ]
+    }
+
+    private func metricCard(_ m: ProgressMetric) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(m.name)
+                    .font(.labelSm)
+                    .foregroundColor(.textMuted)
+                Spacer()
+                if m.isHit {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(m.accent)
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(m.valueLabel)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                Text(m.targetLabel)
+                    .font(.bodySm)
+                    .foregroundColor(.textMuted)
+            }
+            // Benefit tagline under the value, like the reference UI.
+            Text("Benefits: \(m.benefit)")
+                .font(.caption2)
+                .foregroundColor(.textMuted)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.sm)
+        .padding(.leading, Spacing.xs)  // extra room for the accent stripe
+        .background(
+            HStack(spacing: 0) {
+                Rectangle().fill(m.accent).frame(width: 4)
+                Color.cardSurface
+            }
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.sm)
+                .stroke(Color.border.opacity(0.3), lineWidth: 0.5)
+        )
     }
 }
 

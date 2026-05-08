@@ -245,6 +245,10 @@ extension APIClient {
         try await post("/api/log/food", body: entry)
     }
 
+    func getLogForDate(_ date: String) async throws -> TodayLogResponse {
+        try await get("/api/log/date/\(date)")
+    }
+
     func getTodayLog() async throws -> TodayLogResponse {
         try await get("/api/log/today")
     }
