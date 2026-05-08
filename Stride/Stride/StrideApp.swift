@@ -137,13 +137,16 @@ class AppState {
             "onboarding_complete",
             "lastCoachForceRefresh",
             "streak_celebrated_milestones",
-            "water_glasses", "water_date", "water_goal",
+            "water_glasses", "water_date", "water_goal",  // legacy + goal
         ]
         for k in staticKeys { d.removeObject(forKey: k) }
 
-        // Prefix-based keys (per-meal-plan grocery checks, per-reminder notifs)
+        // Prefix-based keys (per-meal-plan grocery checks, per-reminder notifs,
+        // per-date water history).
         for key in d.dictionaryRepresentation().keys
-        where key.hasPrefix("grocery_checked_") || key.hasPrefix("notif_") {
+        where key.hasPrefix("grocery_checked_")
+           || key.hasPrefix("notif_")
+           || key.hasPrefix("water_glasses_") {
             d.removeObject(forKey: key)
         }
 

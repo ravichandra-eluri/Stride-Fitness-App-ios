@@ -1,44 +1,54 @@
 import SwiftUI
 
 // ── Water tracker ────────────────────────────────────────────────────────────
-// Local-only hydration tracking: glass count per local-day, persisted in
-// UserDefaults so it survives relaunches. No backend round-trip needed for
-// such a high-frequency, low-stakes interaction. We can sync later if
-// cross-device hydration becomes a real ask.
+// Local-only hydration tracking with per-day history. Each day's count is
+// stored under a date-scoped UserDefaults key (`water_glasses_YYYY-MM-DD`)
+// so the dashboard can show what was logged on past days. Today is the only
+// day that's editable; past/future days are read-only.
 
 @Observable
 @MainActor
 final class WaterTracker {
     static let shared = WaterTracker()
 
-    var goal: Int = 8       // glasses per day (≈ 250 ml × 8 = 2 L)
-    var glasses: Int = 0    // glasses consumed today
+    var goal: Int = 8                // glasses per day (~250 ml × 8 = 2 L)
+    var glasses: Int = 0             // glasses for the currently-viewed date
+    var viewingDate: Date = Calendar.current.startOfDay(for: Date())
 
-    private let dateKey = "water_date"
-    private let countKey = "water_glasses"
-    private let goalKey  = "water_goal"
+    private let goalKey = "water_goal"
 
     init() {
         load()
     }
 
+    /// True when the tracker is showing today's data and the user can edit it.
+    var isViewingToday: Bool { Calendar.current.isDateInToday(viewingDate) }
+
     func add(_ n: Int = 1) {
-        rolloverIfNeeded()
+        // Only today's count is mutable. Past days are historical record;
+        // future days haven't happened.
+        guard isViewingToday else { return }
         glasses = min(max(glasses + n, 0), 99)
-        persist()
+        persist(glasses, for: viewingDate)
         Haptics.impact(.light)
     }
 
     func reset() {
         glasses = 0
-        persist()
+        persist(0, for: viewingDate)
     }
 
-    /// Re-read from UserDefaults. Used after sign-out clears the keys so the
-    /// in-memory singleton snaps back to a clean slate without an app restart.
+    /// Switch the tracker to display a different day's water count. Read-only
+    /// for past/future dates; write-enabled when it's today.
+    func loadForDate(_ date: Date) {
+        viewingDate = Calendar.current.startOfDay(for: date)
+        glasses = readCount(for: viewingDate)
+    }
+
+    /// Re-read from UserDefaults. Used after sign-out clears keys so the
+    /// in-memory singleton snaps back without an app restart.
     func reloadFromDefaults() {
         goal = 8
-        glasses = 0
         load()
     }
 
@@ -53,35 +63,33 @@ final class WaterTracker {
     private func load() {
         let saved = UserDefaults.standard.integer(forKey: goalKey)
         if saved > 0 { goal = saved }
-        rolloverIfNeeded()
-        glasses = UserDefaults.standard.integer(forKey: countKey)
+        // Default to today's count.
+        viewingDate = Calendar.current.startOfDay(for: Date())
+        glasses = readCount(for: viewingDate)
     }
 
-    private func persist() {
-        UserDefaults.standard.set(glasses, forKey: countKey)
-        UserDefaults.standard.set(todayKey(), forKey: dateKey)
+    private func readCount(for date: Date) -> Int {
+        UserDefaults.standard.integer(forKey: countKey(for: date))
     }
 
-    private func rolloverIfNeeded() {
-        let today = todayKey()
-        let last = UserDefaults.standard.string(forKey: dateKey)
-        if last != today {
-            glasses = 0
-            UserDefaults.standard.set(today, forKey: dateKey)
-            UserDefaults.standard.set(0, forKey: countKey)
-        }
+    private func persist(_ count: Int, for date: Date) {
+        UserDefaults.standard.set(count, forKey: countKey(for: date))
     }
 
-    private func todayKey() -> String {
+    private func countKey(for date: Date) -> String {
+        "water_glasses_\(dateKey(date))"
+    }
+
+    private func dateKey(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
+        return f.string(from: date)
     }
 }
 
 // ── Water card ───────────────────────────────────────────────────────────────
-// Compact card for the Home dashboard. Glass dots on the left, +/- on the
-// right. Tapping the card itself increments by 1 (most common action).
+// Compact card for the Home dashboard. Read-only when viewing past/future
+// days (the +/- buttons hide and a status line clarifies the state).
 
 struct WaterCard: View {
     @Bindable var tracker: WaterTracker
@@ -107,25 +115,16 @@ struct WaterCard: View {
                 glassRow
 
                 HStack {
-                    if tracker.fraction >= 1 {
-                        Label("Goal hit today", systemImage: "checkmark.seal.fill")
-                            .font(.labelSm)
-                            .foregroundColor(.accentSky)
-                    } else {
-                        Text("Tap a glass to log")
-                            .font(.bodySm)
-                            .foregroundColor(.textMuted)
-                    }
+                    statusLabel
                     Spacer()
-                    HStack(spacing: Spacing.xs) {
-                        stepperButton(
-                            icon: "minus",
-                            enabled: tracker.glasses > 0
-                        ) {
-                            if tracker.glasses > 0 { tracker.add(-1) }
-                        }
-                        stepperButton(icon: "plus", enabled: true) {
-                            tracker.add(1)
+                    if tracker.isViewingToday {
+                        HStack(spacing: Spacing.xs) {
+                            stepperButton(icon: "minus", enabled: tracker.glasses > 0) {
+                                if tracker.glasses > 0 { tracker.add(-1) }
+                            }
+                            stepperButton(icon: "plus", enabled: true) {
+                                tracker.add(1)
+                            }
                         }
                     }
                 }
@@ -133,8 +132,24 @@ struct WaterCard: View {
         }
     }
 
-    /// Big circular button to make hit targets obvious. The original 32×30
-    /// inline pair was too small — testers couldn't reliably tap the minus.
+    @ViewBuilder
+    private var statusLabel: some View {
+        if !tracker.isViewingToday {
+            Label("Read only for past days", systemImage: "lock")
+                .font(.bodySm)
+                .foregroundColor(.textMuted)
+        } else if tracker.fraction >= 1 {
+            Label("Goal hit today", systemImage: "checkmark.seal.fill")
+                .font(.labelSm)
+                .foregroundColor(.accentSky)
+        } else {
+            Text("Tap a glass to log")
+                .font(.bodySm)
+                .foregroundColor(.textMuted)
+        }
+    }
+
+    /// Big circular button to make hit targets obvious.
     private func stepperButton(icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
@@ -148,7 +163,6 @@ struct WaterCard: View {
         .buttonStyle(.plain)
     }
 
-    /// Cleaner copy when over goal — "12 of 8" reads weirdly.
     private var countLabel: String {
         let litres = String(format: "%.2f L", tracker.litres)
         if tracker.glasses > tracker.goal {
@@ -163,7 +177,8 @@ struct WaterCard: View {
         return HStack(spacing: 6) {
             ForEach(0..<count, id: \.self) { i in
                 Button {
-                    // Tapping a glass sets the count up to (or back down through) it.
+                    // Tap-to-set only works for today. Read-only on past/future.
+                    guard tracker.isViewingToday else { return }
                     let target = i + 1
                     let delta  = target - tracker.glasses
                     if delta != 0 { tracker.add(delta) }
@@ -174,6 +189,7 @@ struct WaterCard: View {
                         .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.plain)
+                .disabled(!tracker.isViewingToday)
             }
             Spacer(minLength: 0)
         }
