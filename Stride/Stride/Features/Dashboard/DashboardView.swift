@@ -202,6 +202,7 @@ struct DashboardView: View {
     @State private var showCalorieDetail = false
     @State private var heroPage = 0
     @State private var selectedDate = Calendar.current.startOfDay(for: Date())
+    @State private var detailEntry: FoodEntry?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -268,6 +269,15 @@ struct DashboardView: View {
             CalorieDetailSheet(vm: vm)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $detailEntry) { entry in
+            MealEntryDetailSheet(
+                entry: entry,
+                calorieTarget: vm.calorieTarget,
+                onDelete: { Task { await vm.deleteEntry(entry); detailEntry = nil } }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -402,11 +412,13 @@ struct DashboardView: View {
 
                 heroPager
 
-                // Coach message + water are today-only — hide on past/future days.
-                if vm.isViewingToday {
-                    if let msg = vm.coachMessage {
-                        WCoachBubble(message: msg.message)
-                    }
+                // Coach message is today-only (it's a daily message). Water
+                // shows for any day with that day's logged count, but is
+                // read-only when not viewing today.
+                if vm.isViewingToday, let msg = vm.coachMessage {
+                    WCoachBubble(message: msg.message)
+                }
+                if !vm.isViewingFuture {
                     WaterCard(tracker: water)
                 }
 
@@ -494,6 +506,7 @@ struct DashboardView: View {
                 Button {
                     Haptics.selection()
                     selectedDate = cal.startOfDay(for: d)
+                    water.loadForDate(selectedDate)
                     Task {
                         await hk.loadDate(selectedDate)
                         await vm.loadForDate(selectedDate)
@@ -930,14 +943,20 @@ struct DashboardView: View {
                 Divider()
 
                 ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
-                    foodEntryRow(entry)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                Task { await vm.deleteEntry(entry) }
-                            } label: {
-                                Label("Delete entry", systemImage: "trash")
-                            }
+                    Button {
+                        detailEntry = entry
+                        Haptics.selection()
+                    } label: {
+                        foodEntryRow(entry)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            Task { await vm.deleteEntry(entry) }
+                        } label: {
+                            Label("Delete entry", systemImage: "trash")
                         }
+                    }
                     if i < entries.count - 1 {
                         Divider().padding(.leading, Spacing.md)
                     }
@@ -1342,5 +1361,204 @@ struct ProfileView: View {
             Haptics.notify(.error)
         }
         isDeletingAccount = false
+    }
+}
+
+// ── Meal entry detail sheet ──────────────────────────────────────────────────
+// Tap any logged meal in the dashboard to see its macros + benefits, with
+// each value's share of the daily target. Same visual language as the
+// CalorieDetailSheet's daily-progress grid so the two surfaces feel related.
+
+struct MealEntryDetailSheet: View {
+    let entry: FoodEntry
+    let calorieTarget: Int
+    let onDelete: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: Spacing.lg) {
+
+                    // Header: meal type icon + name + serving
+                    VStack(spacing: 8) {
+                        ZStack {
+                            Circle()
+                                .fill(mealColor(entry.mealType).opacity(0.15))
+                                .frame(width: 64, height: 64)
+                            Image(systemName: mealIcon(entry.mealType))
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(mealColor(entry.mealType))
+                        }
+                        Text(entry.foodName)
+                            .font(.titleMd)
+                            .multilineTextAlignment(.center)
+                        Text("\(entry.mealType.capitalized) · \(entry.servingSize)")
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                    }
+                    .padding(.top, Spacing.md)
+
+                    // Calorie hero — big number + share of daily
+                    VStack(spacing: 6) {
+                        Text("\(entry.calories)")
+                            .font(.system(size: 48, weight: .bold, design: .rounded))
+                            .foregroundColor(.brandGreen)
+                        Text("calories")
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                        if calorieTarget > 0 {
+                            let pct = Int((Double(entry.calories) / Double(calorieTarget) * 100).rounded())
+                            Text("\(pct)% of your daily \(calorieTarget) cal")
+                                .font(.labelSm)
+                                .foregroundColor(.brandPurple)
+                                .padding(.horizontal, Spacing.sm)
+                                .padding(.vertical, 4)
+                                .background(Color.brandPurpleBg.opacity(0.5))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    // Macro grid — Protein / Carbs / Fat / Fiber (estimated)
+                    LazyVGrid(
+                        columns: [GridItem(.flexible(), spacing: Spacing.sm),
+                                  GridItem(.flexible(), spacing: Spacing.sm)],
+                        spacing: Spacing.sm
+                    ) {
+                        macroCard(
+                            name: "Protein", value: entry.proteinG, unit: "g",
+                            benefit: "Muscle, recovery, satiety", accent: .brandPurple
+                        )
+                        macroCard(
+                            name: "Carbs", value: entry.carbsG, unit: "g",
+                            benefit: "Energy, brain function", accent: .brandGreen
+                        )
+                        macroCard(
+                            name: "Fat", value: entry.fatG, unit: "g",
+                            benefit: "Hormones, vitamin absorption", accent: .warning
+                        )
+                        macroCard(
+                            name: "Fiber", value: entry.carbsG * 0.10, unit: "g",
+                            benefit: "Digestion, fullness, gut",
+                            accent: .accentMint, estimated: true
+                        )
+                    }
+                    .padding(.horizontal, Spacing.md)
+
+                    // Logging method footer (subtle)
+                    HStack(spacing: 6) {
+                        Image(systemName: methodIcon(entry.logMethod))
+                            .font(.system(size: 11))
+                            .foregroundColor(.textMuted)
+                        Text("Logged via \(entry.logMethod.capitalized)")
+                            .font(.bodySm)
+                            .foregroundColor(.textMuted)
+                    }
+
+                    // Delete
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Label("Delete entry", systemImage: "trash")
+                            .font(.labelMd)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Spacing.sm)
+                            .background(Color.danger.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+                    }
+                    .padding(.horizontal, Spacing.md)
+                }
+                .padding(.bottom, Spacing.xl)
+            }
+            .background(Color.appBackground)
+            .navigationTitle("Meal details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func macroCard(
+        name: String, value: Double, unit: String,
+        benefit: String, accent: Color, estimated: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text(name)
+                    .font(.labelSm)
+                    .foregroundColor(.textMuted)
+                if estimated {
+                    Text("· est")
+                        .font(.caption2)
+                        .foregroundColor(.textMuted.opacity(0.7))
+                }
+                Spacer()
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(formatGrams(value))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                Text(unit)
+                    .font(.bodySm)
+                    .foregroundColor(.textMuted)
+            }
+            Text("Benefits: \(benefit)")
+                .font(.caption2)
+                .foregroundColor(.textMuted)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.sm)
+        .padding(.leading, Spacing.xs)
+        .background(
+            HStack(spacing: 0) {
+                Rectangle().fill(accent).frame(width: 4)
+                Color.cardSurface
+            }
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.sm)
+                .stroke(Color.border.opacity(0.3), lineWidth: 0.5)
+        )
+    }
+
+    private func formatGrams(_ v: Double) -> String {
+        v.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(v))
+            : String(format: "%.1f", v)
+    }
+
+    private func mealIcon(_ type: String) -> String {
+        switch type.lowercased() {
+        case "breakfast": return "sunrise.fill"
+        case "lunch":     return "sun.max.fill"
+        case "snack":     return "leaf.fill"
+        case "dinner":    return "moon.stars.fill"
+        default:          return "fork.knife"
+        }
+    }
+
+    private func mealColor(_ type: String) -> Color {
+        switch type.lowercased() {
+        case "breakfast": return .warning
+        case "lunch":     return .brandGreen
+        case "snack":     return .brandPurple
+        case "dinner":    return .infoText
+        default:          return .textMuted
+        }
+    }
+
+    private func methodIcon(_ method: String) -> String {
+        switch method {
+        case "barcode": return "barcode.viewfinder"
+        case "photo":   return "camera.fill"
+        case "plan":    return "list.bullet"
+        default:        return "pencil"
+        }
     }
 }
