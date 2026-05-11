@@ -54,6 +54,10 @@ class LogFoodViewModel {
     // typed-only entries (no quantity tweak) behave the same as before.
     var servings: Double = 1.0
     var mealType: String = "lunch"
+    /// Date the entry should be logged for. Defaults to today; user can pick
+    /// a recent date from the form (e.g. logging last night's dinner the
+    /// next morning when the local date has rolled over).
+    var logDate: Date = Date()
     var servingSize: String = "1 serving"
     var logMethod: String = "photo"
     var isLogging = false
@@ -270,8 +274,17 @@ class LogFoodViewModel {
             servingSize: loggedServingSize, logMethod: logMethod
         )
         defer { isLogging = false }
+        // Only send `log_date` when it's not today, so the backend's existing
+        // local-date middleware handles the common case unchanged.
+        let dateOverride: String? = {
+            if Calendar.current.isDateInToday(logDate) { return nil }
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            f.timeZone = .current
+            return f.string(from: logDate)
+        }()
         do {
-            let res = try await APIClient.shared.logFood(entry)
+            let res = try await APIClient.shared.logFood(entry, logDate: dateOverride)
             Haptics.notify(.success)
             successMessage = "Logged! Total today: \(res.totalCalories) cal"
             reset()
@@ -288,6 +301,7 @@ class LogFoodViewModel {
         baseCalories = nil; baseProteinG = nil; baseCarbsG = nil; baseFatG = nil
         servings = 1.0
         servingSize = "1 serving"
+        logDate = Date()
         suggestions = []
         showSuggestions = false
     }
@@ -310,6 +324,15 @@ struct LogFoodView: View {
     let mealTypes = ["breakfast", "lunch", "snack", "dinner"]
 
     enum Field: Hashable { case foodName, calories, serving, protein, carbs, fat }
+
+    /// Backdating window for the date picker. 7 days back so users can fix
+    /// late-night entries without it being a free-for-all.
+    private var dateRangeForLogging: ClosedRange<Date> {
+        let cal = Calendar.current
+        let today = Date()
+        let from = cal.date(byAdding: .day, value: -7, to: today) ?? today
+        return from...today
+    }
 
     var body: some View {
         NavigationStack {
@@ -556,6 +579,32 @@ struct LogFoodView: View {
     private var manualForm: some View {
         WCard {
             VStack(alignment: .leading, spacing: Spacing.md) {
+                // Date selector — defaults to today, lets user backdate up to
+                // 7 days for entries logged after the local date rolled over.
+                formField("Date") {
+                    HStack {
+                        DatePicker(
+                            "",
+                            selection: $vm.logDate,
+                            in: dateRangeForLogging,
+                            displayedComponents: .date
+                        )
+                        .labelsHidden()
+                        Spacer()
+                        if !Calendar.current.isDateInToday(vm.logDate) {
+                            Button {
+                                vm.logDate = Date()
+                                Haptics.selection()
+                            } label: {
+                                Text("Today")
+                                    .font(.labelSm)
+                                    .foregroundColor(.brandGreen)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
                 formField("Meal type") {
                     Picker("", selection: $vm.mealType) {
                         ForEach(mealTypes, id: \.self) { Text($0.capitalized).tag($0) }

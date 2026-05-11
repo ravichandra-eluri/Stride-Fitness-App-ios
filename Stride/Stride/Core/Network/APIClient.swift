@@ -241,8 +241,37 @@ extension APIClient {
     }
 
     // Food logging
-    func logFood(_ entry: FoodEntry) async throws -> LogFoodResponse {
-        try await post("/api/log/food", body: entry)
+    func logFood(_ entry: FoodEntry, logDate: String? = nil) async throws -> LogFoodResponse {
+        // The backend treats `log_date` as an optional override on the entry
+        // body. If nil, the server uses the device's local date from the
+        // X-Local-Date header.
+        struct Body: Encodable {
+            let id: String
+            let mealType: String
+            let foodName: String
+            let calories: Int
+            let proteinG: Double
+            let carbsG: Double
+            let fatG: Double
+            let servingSize: String
+            let logMethod: String
+            let barcode: String?
+            let logDate: String?
+        }
+        let body = Body(
+            id: entry.id, mealType: entry.mealType, foodName: entry.foodName,
+            calories: entry.calories, proteinG: entry.proteinG,
+            carbsG: entry.carbsG, fatG: entry.fatG,
+            servingSize: entry.servingSize, logMethod: entry.logMethod,
+            barcode: entry.barcode, logDate: logDate
+        )
+        return try await post("/api/log/food", body: body)
+    }
+
+    func updateFoodEntryMealType(id: String, mealType: String) async throws {
+        struct Body: Encodable { let mealType: String }
+        struct Resp: Decodable {}
+        let _: Resp = try await patch("/api/log/food/\(id)", body: Body(mealType: mealType))
     }
 
     func getLogForDate(_ date: String) async throws -> TodayLogResponse {

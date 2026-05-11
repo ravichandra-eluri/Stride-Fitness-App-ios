@@ -274,7 +274,8 @@ struct DashboardView: View {
             MealEntryDetailSheet(
                 entry: entry,
                 calorieTarget: vm.calorieTarget,
-                onDelete: { Task { await vm.deleteEntry(entry); detailEntry = nil } }
+                onDelete: { Task { await vm.deleteEntry(entry); detailEntry = nil } },
+                onUpdated: { Task { await vm.loadForDate(vm.viewingDate) } }
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -1373,27 +1374,69 @@ struct MealEntryDetailSheet: View {
     let entry: FoodEntry
     let calorieTarget: Int
     let onDelete: () -> Void
+    /// Called after a successful meal-type change so the parent (dashboard)
+    /// can refresh the day's log and rerender its grouped list.
+    var onUpdated: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+
+    /// Locally-tracked meal type so the picker reflects the change immediately
+    /// while the PATCH is in flight.
+    @State private var currentMealType: String = ""
+    @State private var isUpdating = false
+
+    private let mealOptions = ["breakfast", "lunch", "snack", "dinner"]
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: Spacing.lg) {
 
-                    // Header: meal type icon + name + serving
+                    // Header: meal type icon + name + serving + editable picker
                     VStack(spacing: 8) {
                         ZStack {
                             Circle()
-                                .fill(mealColor(entry.mealType).opacity(0.15))
+                                .fill(mealColor(currentMealType).opacity(0.15))
                                 .frame(width: 64, height: 64)
-                            Image(systemName: mealIcon(entry.mealType))
+                            Image(systemName: mealIcon(currentMealType))
                                 .font(.system(size: 24, weight: .semibold))
-                                .foregroundColor(mealColor(entry.mealType))
+                                .foregroundColor(mealColor(currentMealType))
                         }
                         Text(entry.foodName)
                             .font(.titleMd)
                             .multilineTextAlignment(.center)
-                        Text("\(entry.mealType.capitalized) · \(entry.servingSize)")
+
+                        // Tappable meal-type chip — lets the user fix a
+                        // mis-classified entry without re-logging.
+                        Menu {
+                            ForEach(mealOptions, id: \.self) { option in
+                                Button {
+                                    Task { await change(to: option) }
+                                } label: {
+                                    if option == currentMealType {
+                                        Label(option.capitalized, systemImage: "checkmark")
+                                    } else {
+                                        Text(option.capitalized)
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(currentMealType.capitalized)
+                                    .font(.labelMd)
+                                    .foregroundColor(mealColor(currentMealType))
+                                Image(systemName: isUpdating ? "ellipsis" : "chevron.down")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(mealColor(currentMealType))
+                            }
+                            .padding(.horizontal, Spacing.sm)
+                            .padding(.vertical, 4)
+                            .background(mealColor(currentMealType).opacity(0.12))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(mealColor(currentMealType).opacity(0.35), lineWidth: 1))
+                        }
+                        .disabled(isUpdating)
+
+                        Text(entry.servingSize)
                             .font(.bodySm)
                             .foregroundColor(.textMuted)
                     }
@@ -1478,6 +1521,7 @@ struct MealEntryDetailSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .onAppear { if currentMealType.isEmpty { currentMealType = entry.mealType } }
         }
     }
 
@@ -1531,6 +1575,25 @@ struct MealEntryDetailSheet: View {
         v.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(v))
             : String(format: "%.1f", v)
+    }
+
+    /// Sends the meal-type change to the server, then notifies the parent so
+    /// the dashboard list rerenders with the new grouping.
+    @MainActor
+    private func change(to newType: String) async {
+        guard newType != currentMealType else { return }
+        isUpdating = true
+        defer { isUpdating = false }
+        let previous = currentMealType
+        currentMealType = newType  // optimistic
+        do {
+            try await APIClient.shared.updateFoodEntryMealType(id: entry.id, mealType: newType)
+            Haptics.notify(.success)
+            onUpdated?()
+        } catch {
+            currentMealType = previous
+            Haptics.notify(.error)
+        }
     }
 
     private func mealIcon(_ type: String) -> String {
